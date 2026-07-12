@@ -71,4 +71,35 @@ public class DrdpConnectionTests
         Assert.Contains(resends, x => x.SequenceEqual(dg2));        // seq 2 unacked -> retransmitted
         Assert.DoesNotContain(resends, x => x.SequenceEqual(dg1));  // seq 1 acked -> not retransmitted
     }
+
+    // G1: end-to-end. A server datagram carrying a segment (flag 0x01 seg-ack), a game-channel
+    // message, and a corrected 0xFB control message drives the bot's next flush to emit
+    // flag 0x02 = received-control-seq + 1 and flag 0x01 = received segment seq.
+    [Fact]
+    public void Flush_emits_next_expected_control_ack_and_segment_ack_after_inbound()
+    {
+        var seg = new PacketWriter();
+        seg.WriteByte(0x01);                 // server seg flags: seg-ack
+        seg.WriteU16LE(9);                   // server segment seq (bot will echo as flag 0x01)
+        seg.WriteU16LE(3);                   // flag 0x01: server's ack of bot seg seq (irrelevant here)
+        // game message on channel 0x00 (bot owes a flag-0x10 ack): type,size,seq,refnum,payload
+        seg.WriteByte(0x00); seg.WriteByte(1); seg.WriteU16LE(0x28); seg.WriteByte(0); seg.WriteByte(0x11);
+        // control message (corrected format, NO refnum): type 0xFB, size 2, seq 7, payload {0xAA,0xBB}
+        seg.WriteByte(0xFB); seg.WriteByte(2); seg.WriteU16LE(7); seg.WriteByte(0xAA); seg.WriteByte(0xBB);
+        byte[] serverDg = OuterFrame.Build(srcEp: 0x2001, dstEp: 0x0102,
+            flags: OuterFrame.FlagHasInstance, instanceId: 0x1122, body: seg.AsSpan());
+
+        var conn = new DrdpConnection(srcEp: 0x0102, instanceId: 0xAABBCCDD);
+        var ch = new FakeChannel();
+        conn.OnInbound(serverDg);
+        conn.Flush(nowMs: 100, ch);
+
+        Assert.Single(ch.Sent);              // one pure-ack datagram
+        Assert.True(InboundSegment.TryParse(ch.Sent[0], out var op));   // wire form is symmetric; reuse the parser
+        Assert.True(op.HasSegmentAck);
+        Assert.Equal((ushort)9, op.SegmentAck);       // flag 0x01 = received segment seq
+        Assert.True(op.HasControlAck);
+        Assert.Equal((ushort)8, op.ControlAckBase);   // flag 0x02 = received control seq (7) + 1
+        Assert.Equal((ushort)0x28, op.ChannelReceived[0x00]);  // flag 0x10 = received game-channel seq
+    }
 }
