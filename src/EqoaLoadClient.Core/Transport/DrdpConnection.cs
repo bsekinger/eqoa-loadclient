@@ -17,9 +17,10 @@ public sealed class DrdpConnection
     private readonly AckState _acks = new();
     private ushort _controlSeq = 1;              // reliable control-message seq (type 0xFB); no refnum/XOR-delta
 
-    private sealed class Pending { public byte[] Datagram = default!; public long LastSendMs; public bool Acked; }
+    private sealed class Pending { public byte[] Datagram = default!; public long LastSendMs; public bool Acked; public ushort Seq; }
     private readonly List<Pending> _retransmit = new();
     private byte[]? _pendingReliableMsg;         // encoded control message awaiting first flush
+    private ushort _pendingReliableSeq;          // control seq of _pendingReliableMsg (for retransmit reaping)
     private byte[]? _pendingMovementMsg;         // encoded channel-0x40 message awaiting flush (not retransmitted)
 
     public DrdpConnection(ushort srcEp, uint instanceId) { _srcEp = srcEp; _instanceId = instanceId; }
@@ -27,6 +28,7 @@ public sealed class DrdpConnection
     public void SendReliable(ReadOnlySpan<byte> payload)
     {
         _pendingReliableMsg = ControlMessage.Encode(0xFB, _controlSeq, payload);
+        _pendingReliableSeq = _controlSeq;
         _controlSeq++;
     }
     /// Queues a channel-0x40 movement message for the next flush and returns it (metrics hook).
@@ -49,7 +51,9 @@ public sealed class DrdpConnection
         // (b) The server's acks OF the bot's messages -> clear retransmit + advance XOR base:
         if (p.HasControlAck)
         {
-            foreach (var pend in _retransmit) pend.Acked = true;   // control reliables acked up to base
+            // ControlAckBase is the server's NEXT-EXPECTED control seq; seqs strictly below it are acknowledged.
+            foreach (var pend in _retransmit)
+                if (pend.Seq < p.ControlAckBase) pend.Acked = true;
         }
         if (p.ChannelReceived.TryGetValue(0x40, out var movAck)) _movement.OnPeerAckedChannelSeq(movAck);
     }
@@ -80,7 +84,7 @@ public sealed class DrdpConnection
         // Only the reliable message is retransmitted; movement is superseded by the next tick.
         // (The establishment join is sent before movement starts, so its retransmit datagram is join-only.)
         if (_pendingReliableMsg != null)
-            _retransmit.Add(new Pending { Datagram = dg, LastSendMs = nowMs });
+            _retransmit.Add(new Pending { Datagram = dg, LastSendMs = nowMs, Seq = _pendingReliableSeq });
         _pendingReliableMsg = null;
         _pendingMovementMsg = null;
     }

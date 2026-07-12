@@ -22,8 +22,8 @@ public sealed class AckState
     {
         byte flags = 0;
         var w = new PacketWriter(16);
-        if (_seg) { flags |= 0x01; w.WriteU16LE(_segSeq); }
-        if (_ctrl) { flags |= 0x02; w.WriteU16LE(_ctrlSeq); }
+        if (_seg) { flags |= 0x01; w.WriteU16LE(_segSeq); }               // segment ack = highest received (cumulative)
+        if (_ctrl) { flags |= 0x02; w.WriteU16LE((ushort)(_ctrlSeq + 1)); } // control ack = NEXT-EXPECTED (received + 1)
         if (_chan.Count > 0)
         {
             flags |= 0x10;
