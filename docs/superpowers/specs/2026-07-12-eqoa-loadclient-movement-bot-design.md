@@ -83,10 +83,10 @@ would perturb the very thing being measured.
   - `Movement/` — the 41-byte channel-0x40 record builder, the quantizer
     (`round((v-min)/(max-min) · 2^(8n))`, BE, zero-range component omitted), the
     range table, and a **world-bounded wander** that queries an `IMovementRegion`
-    for valid next positions and never leaves it (bounded-box/radius for P0;
-    navmesh-constrained for P1 via the existing `EQOA_NavmeshBuilder` /
-    `EQOAEmu.ZoneExtractor` data). The region is supplied per bot in `BotConfig`,
-    so the core stays world-agnostic.
+    for valid next positions and never leaves it. Region impls: a bounded-box
+    P0 stepping-stone, then a **collision/navmesh-backed** region derived from the
+    client's own per-world `.esf` collision (see World placement). The region is
+    supplied per bot in `BotConfig`, so the core stays world-agnostic.
   - `Bot/` — `BotClient` (public API + `Tick(nowMs)`), `BotConfig`, `BotState`,
     metrics/events, and `IBotBehavior` (the pluggable per-tick behavior seam).
     `MovementBehavior` is the only P0 implementation; combat/cast/chat plug in
@@ -139,13 +139,23 @@ different sizes, so the fleet runs a large bot count on Tunaria and smaller sets
 on the others. This splits across the two layers:
 
 - **Bot core (this repo) is world-agnostic.** Each bot is handed an
-  `IMovementRegion` in `BotConfig` and wanders only within it. P0 region =
-  bounded box / spawn-radius; P1 region = navmesh-constrained (existing
-  `EQOA_NavmeshBuilder` / `EQOAEmu.ZoneExtractor` data). The core never encodes a
-  position outside its region.
+  `IMovementRegion` in `BotConfig` and wanders only within it. The core never
+  encodes a position outside its region.
+- **Authoritative bound = the client's own collision data.** EQOA movement is
+  **client-authoritative** — the server trusts the position the client sends,
+  which is precisely why the *client* keeps itself bounded to the world geometry
+  using the per-world collision files in the ISO (`Tunaria.esf`, `Rathe.esf`,
+  `Odus.esf`, `LavaStorm.esf`, and the Plane of Sky / Secrets equivalents). The
+  bot must self-bound the same way, or it will stream positions inside walls / off
+  cliffs — unrealistic load that also skews the server's LOS/liquid checks. So
+  the faithful `IMovementRegion` is backed by that same `.esf` collision (via the
+  existing `EQOAEmu.ZoneExtractor` / `EQOA_NavmeshBuilder` pipeline). The
+  bounded-box region is only a P0 stepping-stone to get the wire working; the
+  collision/navmesh region is the real one and lands within the movement
+  milestone.
 - **Fleet (emu session) owns distribution:** the world roster, the per-world bot
-  counts (Tunaria-heavy), and each bot's spawn region — derived from its world
-  data.
+  counts (Tunaria-heavy), and each bot's spawn region — derived from the same
+  world data.
 
 **Clustering matters more than spreading for the load test.** Bots spread thin
 across a world have no neighbors, so the per-tick proximity / C9 path barely
