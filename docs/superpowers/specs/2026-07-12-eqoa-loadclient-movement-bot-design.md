@@ -82,7 +82,11 @@ would perturb the very thing being measured.
     ack). No login / char-select / world-entry.
   - `Movement/` — the 41-byte channel-0x40 record builder, the quantizer
     (`round((v-min)/(max-min) · 2^(8n))`, BE, zero-range component omitted), the
-    range table, and a simple wander behavior.
+    range table, and a **world-bounded wander** that queries an `IMovementRegion`
+    for valid next positions and never leaves it (bounded-box/radius for P0;
+    navmesh-constrained for P1 via the existing `EQOA_NavmeshBuilder` /
+    `EQOAEmu.ZoneExtractor` data). The region is supplied per bot in `BotConfig`,
+    so the core stays world-agnostic.
   - `Bot/` — `BotClient` (public API + `Tick(nowMs)`), `BotConfig`, `BotState`,
     metrics/events, and `IBotBehavior` (the pluggable per-tick behavior seam).
     `MovementBehavior` is the only P0 implementation; combat/cast/chat plug in
@@ -112,7 +116,8 @@ the `BotClient` API + a shared `Tick` scheduler.
    channel-0x40 movement. `classId`/`level` are carried so the same join
    provisions an entity later behaviors (combat, casting) can drive without
    reworking the join. Opcode number assigned by the emu's registry.
-3. **Movement loop** — every ~100 ms (server-set), emit the 41-byte channel-0x40
+3. **Movement loop** — every ~100 ms (server-set), wander **within the bot's
+   assigned world region** (`IMovementRegion`) and emit the 41-byte channel-0x40
    record: update counter, quantized position (BE) + heading + a plausible
    Y-delta; velocity/accel vectors may be zero for a wander bot. Refnum XOR-delta
    is applied by the message layer against channel-0x40 history.
@@ -125,6 +130,30 @@ the `BotClient` API + a shared `Tick` scheduler.
 5. **Clean logout** — app opcode `0x9b0`, then the DRDP FIN (outer
    `ResetConnection | HasInstance` + InstanceID; best-effort, per
    `drdp-close-fin-wire-shape`).
+
+## World placement & distribution
+
+Movement must stay bound to a real world. There are several — **Tunaria** (huge),
+**Rathe**, **Odus**, **LavaStorm**, **Plane of Sky**, **Secrets** — of very
+different sizes, so the fleet runs a large bot count on Tunaria and smaller sets
+on the others. This splits across the two layers:
+
+- **Bot core (this repo) is world-agnostic.** Each bot is handed an
+  `IMovementRegion` in `BotConfig` and wanders only within it. P0 region =
+  bounded box / spawn-radius; P1 region = navmesh-constrained (existing
+  `EQOA_NavmeshBuilder` / `EQOAEmu.ZoneExtractor` data). The core never encodes a
+  position outside its region.
+- **Fleet (emu session) owns distribution:** the world roster, the per-world bot
+  counts (Tunaria-heavy), and each bot's spawn region — derived from its world
+  data.
+
+**Clustering matters more than spreading for the load test.** Bots spread thin
+across a world have no neighbors, so the per-tick proximity / C9 path barely
+fires. The fleet should *cluster* bots (via the `LoadBotJoin` spawn-cluster
+field) into proximity hotspots per world: per-world counts set the scale,
+clustering sets whether the load is real. Bot positions are plausibly in-world by
+construction, so the server's LOS / liquid checks (`EQOAEmu.LosAndInLiquidTest`)
+exercise meaningfully rather than rejecting/correcting.
 
 ## Conformance harness
 
@@ -173,9 +202,10 @@ reshape, because every bot lives behind `BotClient` + `Tick`.
   combat/cast-capable entity keyed to the session and optionally replies with the
   assigned entity id. The emu session builds the matching handler. The exact
   opcode number and any extra placement fields (heading, spawn-cluster so bots
-  spread across proximity cells, model/race id) are finalized on the bridge
-  before P0. This removes the retail-login RE dependency from the movement
-  milestone entirely.
+  *concentrate* into proximity hotspots, model/race id) are finalized on the
+  bridge before P0. This removes the retail-login RE dependency from the movement
+  milestone entirely. `zoneId` identifies the world/zone (Tunaria, Rathe, Odus,
+  LavaStorm, Plane of Sky, Secrets).
 - **Which inbound message type triggers the server→client RLE path**
   (`drdp_segment_parse`) — only relevant if the bot must *decode* an RLE'd inbound
   message; movement-only inbound is acks + position/spawn, so likely not on the
