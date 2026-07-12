@@ -11,7 +11,7 @@ public sealed class BotConfig
     public byte ClassId { get; init; }
     public byte Level { get; init; }
     public ushort Cluster { get; init; }
-    public uint JoinOpcode { get; init; }          // from the emu registry
+    public ushort JoinOpcode { get; init; }        // u16 GameOpcode from the emu registry (0x0BB0)
     public int IntervalMs { get; init; } = 100;
     public required IMovementRegion Region { get; init; }
 }

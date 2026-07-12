@@ -5,22 +5,26 @@ it sends ONE reliable control message on channel `0xfb` carrying `LoadBotJoin`.
 The emu injects a ceremony-free but fully combat/cast-capable entity keyed to the
 DRDP session and begins accepting the bot's channel-`0x40` movement.
 
-## Wire payload (little-endian scalars)
+## Wire payload (little-endian scalars) — FINALIZED with emu 2026-07-12
 
 | off | size | field    | meaning                                                     |
 |-----|------|----------|-------------------------------------------------------------|
-| 0   | u32  | opcode   | LoadBotJoin opcode — **assigned by the emu registry** (TBD) |
-| 4   | u32  | botIndex | 0..N-1, stable per bot                                       |
-| 8   | u16  | zoneId   | world/zone: Tunaria, Rathe, Odus, LavaStorm, Plane of Sky, Secrets |
-| 10  | s32  | x        | spawn X (world units)                                       |
-| 14  | s32  | y        | spawn Y                                                     |
-| 18  | s32  | z        | spawn Z                                                     |
-| 22  | u8   | classId  | so the injected entity is combat/cast-capable               |
-| 23  | u8   | level    | 1..60                                                       |
-| 24  | u16  | cluster  | spawn-cluster: bots sharing a value **concentrate** into one proximity hotspot |
+| 0   | u16  | opcode   | **`0x0BB0`** (emu-assigned `GameOpcode.LoadBotJoin`)         |
+| 2   | u32  | botIndex | 0..N-1, stable per bot                                       |
+| 6   | u16  | zoneId   | world/zone: Tunaria, Rathe, Odus, LavaStorm, Plane of Sky, Secrets |
+| 8   | s32  | x        | spawn X (world units) — **must be > 0** (emu bounds-check)  |
+| 12  | s32  | y        | spawn Y                                                     |
+| 16  | s32  | z        | spawn Z — **must be > 0** (emu bounds-check)                |
+| 20  | u8   | classId  | so the injected entity is combat/cast-capable               |
+| 21  | u8   | level    | 1..60                                                       |
+| 22  | u16  | cluster  | spawn-cluster: bots sharing a value **concentrate** into one proximity hotspot |
 
-Total payload = 26 bytes. Carried as the body of a reliable control message
-(type `0xfb`) over the DRDP transport.
+Total payload = **24 bytes**. The opcode is a **u16** (`GameOpcode` is a `ushort`;
+the emu reads `Read<ushort>()` then dispatches, reading the 22-byte payload from
+`botIndex`). Carried as the body of a reliable control message (type `0xfb`) over
+the DRDP transport. The emu handler is on branch `loadbotjoin`, gated behind
+`EnableLoadBotJoin` (default OFF in production — the bypass spawns an
+unauthenticated entity).
 
 ## Outer-transport note
 

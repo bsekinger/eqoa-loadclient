@@ -4,12 +4,13 @@ namespace EqoaLoadClient.Core.Session;
 
 public static class LoadBotJoin
 {
-    /// Payload per docs/protocol/loadbotjoin.md. Opcode assigned by the emu registry.
-    public static byte[] Encode(uint opcode, uint botIndex, ushort zoneId,
+    /// Payload per docs/protocol/loadbotjoin.md. Opcode is a u16 GameOpcode
+    /// (emu assigned 0x0BB0); the body is 24 bytes, all little-endian.
+    public static byte[] Encode(ushort opcode, uint botIndex, ushort zoneId,
         int x, int y, int z, byte classId, byte level, ushort cluster)
     {
-        var w = new PacketWriter(26);
-        w.WriteU32LE(opcode);
+        var w = new PacketWriter(24);
+        w.WriteU16LE(opcode);
         w.WriteU32LE(botIndex);
         w.WriteU16LE(zoneId);
         w.WriteS32LE(x); w.WriteS32LE(y); w.WriteS32LE(z);

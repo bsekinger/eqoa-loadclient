@@ -7,11 +7,15 @@ using EqoaLoadClient.Core.Transport;
 // usage: Harness <serverIp> <port> <joinOpcodeHex> [zoneId] [x y z]
 var ip = IPAddress.Parse(args[0]);
 int port = int.Parse(args[1]);
-uint opcode = Convert.ToUInt32(args[2], 16);
+ushort opcode = Convert.ToUInt16(args[2], 16);   // LoadBotJoin is a u16 GameOpcode (emu: 0x0BB0)
 ushort zone = args.Length > 3 ? ushort.Parse(args[3]) : (ushort)1;
-var spawn = args.Length > 6 ? new Vector3(int.Parse(args[4]), int.Parse(args[5]), int.Parse(args[6])) : new Vector3(0, 0, 0);
+// The emu's zone bounds-check rejects a spawn with X or Z <= 0, so default to positive coords.
+var spawn = args.Length > 6 ? new Vector3(int.Parse(args[4]), int.Parse(args[5]), int.Parse(args[6])) : new Vector3(2000, 0, 2000);
 
-var region = new BoundingBoxRegion(spawn - new Vector3(500,10,500), spawn + new Vector3(500,10,500), spawn, seed: 1);
+var min = spawn - new Vector3(500, 10, 500);
+var max = spawn + new Vector3(500, 10, 500);
+min.X = MathF.Max(1, min.X); min.Z = MathF.Max(1, min.Z);   // keep the whole region strictly positive in X/Z
+var region = new BoundingBoxRegion(min, max, spawn, seed: 1);
 using var ch = new UdpChannel(new IPEndPoint(ip, port));
 var cfg = new BotConfig
 {
