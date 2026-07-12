@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EqoaLoadClient.Core/EqoaLoadClient.Core.csproj" />
+    <Project Path="src/EqoaLoadClient.Harness/EqoaLoadClient.Harness.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EqoaLoadClient.Tests/EqoaLoadClient.Tests.csproj" />
+  </Folder>
+</Solution>
