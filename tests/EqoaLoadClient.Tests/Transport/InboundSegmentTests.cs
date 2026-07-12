@@ -14,8 +14,8 @@ public class InboundSegmentTests
         seg.WriteU16LE(9);               // segment seq
         seg.WriteU16LE(3);               // flag 0x01: highest bot segment seq the server acked
         seg.WriteByte(0x00); seg.WriteU16LE(0x28); seg.WriteByte(0xF8); // chan 0x00 recv seq 40
-        // one control message: type 0xFB, size 1, seq 4, refnum 0, payload {0xAA}
-        seg.WriteByte(0xFB); seg.WriteByte(1); seg.WriteU16LE(4); seg.WriteByte(0); seg.WriteByte(0xAA);
+        // one control message: type 0xFB, size 1, seq 4, payload {0xAA} — NO refnum (control format)
+        seg.WriteByte(0xFB); seg.WriteByte(1); seg.WriteU16LE(4); seg.WriteByte(0xAA);
         return OuterFrame.Build(srcEp: 0x2001, dstEp: 0x0102,
             flags: OuterFrame.FlagHasInstance, instanceId: 0x1122, body: seg.AsSpan());
     }
@@ -31,5 +31,38 @@ public class InboundSegmentTests
         Assert.Contains((byte)0x00, p.ChannelReceived.Keys);   // will be ignored by bot; server's recv of chan 0
         Assert.Single(p.ControlMessagesReceived);
         Assert.Equal((ushort)4, p.ControlMessagesReceived[0]); // bot must ack control seq 4
+    }
+
+    // G3: a truncated datagram must return false, never throw.
+    [Fact]
+    public void Truncated_datagram_returns_false_without_throwing()
+    {
+        byte[] full = BuildServerDatagram();
+        byte[] truncated = full[..5];   // first 5 bytes of a valid datagram
+
+        bool result = true;
+        var ex = Record.Exception(() => result = InboundSegment.TryParse(truncated, out _));
+        Assert.Null(ex);
+        Assert.False(result);
+    }
+
+    // I1: a message whose declared size overruns the body is rejected, not read past the buffer.
+    [Fact]
+    public void Message_size_exceeding_body_returns_false_without_throwing()
+    {
+        var seg = new PacketWriter();
+        seg.WriteByte(0x00);                 // segment flags: none
+        seg.WriteU16LE(1);                   // segment seq
+        // control message: header (type,size,seq) all readable, but declared 200-byte
+        // payload overruns the 3 bytes actually present -> CanRead(size) rejects the skip.
+        seg.WriteByte(0xFB); seg.WriteByte(200); seg.WriteU16LE(7);
+        seg.WriteByte(0xAA); seg.WriteByte(0xBB); seg.WriteByte(0xCC);
+        byte[] dg = OuterFrame.Build(srcEp: 0x2001, dstEp: 0x0102,
+            flags: OuterFrame.FlagHasInstance, instanceId: 0x1122, body: seg.AsSpan());
+
+        bool result = true;
+        var ex = Record.Exception(() => result = InboundSegment.TryParse(dg, out _));
+        Assert.Null(ex);
+        Assert.False(result);
     }
 }

@@ -37,25 +37,31 @@ public sealed class DrdpConnection
 
     public void OnInbound(ReadOnlySpan<byte> datagram)
     {
-        if (!InboundSegment.TryParse(datagram, out var p)) return;
-
-        // Learn the server's endpoint id; identity is confirmed once we hear back.
-        _dstEp = p.ServerEndpoint;
-        _identityConfirmed = true;
-
-        // (a) Acks the bot OWES the server:
-        _acks.OnInboundSegmentSeq(p.SegmentSeq);
-        foreach (var seq in p.ControlMessagesReceived) _acks.OnInboundControlSeq(seq);
-        foreach (var (chan, seq) in p.GameMessagesReceived) _acks.NoteChannelReceived(chan, seq);
-
-        // (b) The server's acks OF the bot's messages -> clear retransmit + advance XOR base:
-        if (p.HasControlAck)
+        // Belt-and-suspenders: a malformed datagram is dropped, never propagates out of Tick.
+        try
         {
-            // ControlAckBase is the server's NEXT-EXPECTED control seq; seqs strictly below it are acknowledged.
-            foreach (var pend in _retransmit)
-                if (pend.Seq < p.ControlAckBase) pend.Acked = true;
+            if (!InboundSegment.TryParse(datagram, out var p)) return;
+
+            // Learn the server's endpoint id; identity is confirmed once we hear back.
+            _dstEp = p.ServerEndpoint;
+            _identityConfirmed = true;
+
+            // (a) Acks the bot OWES the server:
+            _acks.OnInboundSegmentSeq(p.SegmentSeq);
+            foreach (var seq in p.ControlMessagesReceived) _acks.OnInboundControlSeq(seq);
+            foreach (var (chan, seq) in p.GameMessagesReceived) _acks.NoteChannelReceived(chan, seq);
+
+            // (b) The server's acks OF the bot's messages -> clear retransmit + advance XOR base:
+            if (p.HasControlAck)
+            {
+                // ControlAckBase is the server's NEXT-EXPECTED control seq; seqs strictly below it are acknowledged.
+                foreach (var pend in _retransmit)
+                    if (pend.Seq < p.ControlAckBase) pend.Acked = true;
+            }
+            if (p.ChannelReceived.TryGetValue(0x40, out var movAck)) _movement.OnPeerAckedChannelSeq(movAck);
         }
-        if (p.ChannelReceived.TryGetValue(0x40, out var movAck)) _movement.OnPeerAckedChannelSeq(movAck);
+        catch (IndexOutOfRangeException) { }
+        catch (ArgumentOutOfRangeException) { }
     }
 
     public void NoteMovementAcked(ushort seq) => _movement.OnPeerAckedChannelSeq(seq);
