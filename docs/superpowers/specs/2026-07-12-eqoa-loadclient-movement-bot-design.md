@@ -9,8 +9,9 @@
 A C# (.NET 9) fleet of lightweight virtual EQOA clients that speak real DRDP to
 the EQOAEmu server, to load-test it and baseline capacity before the
 transport-decoupling work. This spec covers the **movement-only** milestone: a
-single bot that logs in, enters world, wanders, acks correctly, and logs out —
-built as a class-library **core** the emu's .NET fleet layer hosts in-process.
+single bot that establishes a DRDP session, joins the world via a lightweight
+bypass (no auth/char-select), wanders, acks correctly, and logs out — built as a
+class-library **core** the emu's .NET fleet layer hosts in-process.
 
 The first milestone bar is **functional**: one bot completes the full lifecycle
 against the emu without being dead-peer-reaped. Byte-level conformance against a
@@ -77,11 +78,15 @@ would perturb the very thing being measured.
     **Endianness:** quantized movement fields big-endian, all other scalars
     little-endian.
   - `Session/` — establishment (NewInstance/InstanceID keyed by (addr,
-    InstanceID)) + the login→char-select→world-entry state machine.
+    InstanceID)) + the `LoadBotJoin` bypass (send join, await the emu's spawn
+    ack). No login / char-select / world-entry.
   - `Movement/` — the 41-byte channel-0x40 record builder, the quantizer
     (`round((v-min)/(max-min) · 2^(8n))`, BE, zero-range component omitted), the
     range table, and a simple wander behavior.
-  - `Bot/` — `BotClient` (public API), `BotConfig`, `BotState`, metrics/events.
+  - `Bot/` — `BotClient` (public API + `Tick(nowMs)`), `BotConfig`, `BotState`,
+    metrics/events, and `IBotBehavior` (the pluggable per-tick behavior seam).
+    `MovementBehavior` is the only P0 implementation; combat/cast/chat plug in
+    later over the same transport + session.
 - **`EqoaLoadClient.Harness`** (console app): single-bot runner + the capture-diff
   conformance tool.
 - **`EqoaLoadClient.Tests`** (xUnit): codec round-trips + assertions against the
@@ -97,24 +102,27 @@ the `BotClient` API + a shared `Tick` scheduler.
    Endpoint ids: send `dst_ep = 0xFFFE` (wildcard) until the server's id is
    learned. Seeds: segment seq = 1, per-channel message seq = 1, RTO interval =
    1000 ms.
-2. **Login** — on reliable control channel `0xfb`: hello opcode `0x0000` (+u32
-   `0x25`), identify opcode `0x0904`. *(Exact payloads: see Open Dependencies.)*
-3. **Char-select** — soft-ack the server's messages so the cumulative control-ack
-   reaches `0x02`; trigger character selection.
-4. **World-entry** — receive `0x000D` (world/character dump; ack and discard),
-   which gates the client; reply with the bare u16 `0x0014` ("character in world")
-   on channel `0xfb`.
-5. **Movement loop** — every ~100 ms (server-set), emit the 41-byte channel-0x40
+2. **LoadBotJoin (login bypass)** — instead of the retail auth / login /
+   char-select / world-entry flow, send one bespoke `LoadBotJoin` opcode as a
+   normal reliable control message on channel `0xfb` (transport still fully
+   exercised): `{ u32 botIndex, u16 zoneId, s32 x, s32 y, s32 z, u8 classId,
+   u8 level }`. The emu injects a **ceremony-free but fully combat/cast-capable**
+   entity keyed to the DRDP session — no DB account, no inventory ceremony, no
+   char-select, no `0x000D`/`0x0014` handshake — and begins accepting the bot's
+   channel-0x40 movement. `classId`/`level` are carried so the same join
+   provisions an entity later behaviors (combat, casting) can drive without
+   reworking the join. Opcode number assigned by the emu's registry.
+3. **Movement loop** — every ~100 ms (server-set), emit the 41-byte channel-0x40
    record: update counter, quantized position (BE) + heading + a plausible
    Y-delta; velocity/accel vectors may be zero for a wander bot. Refnum XOR-delta
    is applied by the message layer against channel-0x40 history.
-6. **Ack emission** — the segment flags byte carries flag `0x01`/`0x02`
+4. **Ack emission** — the segment flags byte carries flag `0x01`/`0x02`
    (cumulative segment + control-message acks) and `0x10` (per-channel game acks)
    per the emit contract. **Prompt single-acks are the health lever** (finding
    `drdp-retransmit-cadence`): acking promptly resets the peer's retransmit
    interval and arms fast-retransmit. An un-acking bot is dead-peer-reaped in
    60 s — non-negotiable.
-7. **Clean logout** — app opcode `0x9b0`, then the DRDP FIN (outer
+5. **Clean logout** — app opcode `0x9b0`, then the DRDP FIN (outer
    `ResetConnection | HasInstance` + InstanceID; best-effort, per
    `drdp-close-fin-wire-shape`).
 
@@ -158,22 +166,39 @@ reshape, because every bot lives behind `BotClient` + `Tick`.
 
 ## Open dependencies
 
-- **Login/char-select opcode payloads.** The skeleton is known (`FUN_012b9bb8`:
-  drdp connect → `0x0000`+u32 `0x25` → `0x0904` → char-select → `0x000D`→`0x0014`),
-  but the exact byte contents of `0x0000`/`0x0904`/char-select are not fully
-  pinned. **P0 approach:** scope login to satisfy the **emu's** login handler
-  (quick contract with the server session), since the bot targets the emu.
-  **Follow-up:** RE the retail payloads so the bot also validates login against a
-  real capture. Tracked as a separate finding request on the bridge if needed.
+- **`LoadBotJoin` opcode (bot↔emu contract).** Login/auth/char-select are
+  bypassed, so the single join message is a *joint definition*, not an RE task:
+  the bot emits `LoadBotJoin { u32 botIndex, u16 zoneId, s32 x, s32 y, s32 z,
+  u8 classId, u8 level }` on channel `0xfb`; the emu injects a ceremony-free,
+  combat/cast-capable entity keyed to the session and optionally replies with the
+  assigned entity id. The emu session builds the matching handler. The exact
+  opcode number and any extra placement fields (heading, spawn-cluster so bots
+  spread across proximity cells, model/race id) are finalized on the bridge
+  before P0. This removes the retail-login RE dependency from the movement
+  milestone entirely.
 - **Which inbound message type triggers the server→client RLE path**
   (`drdp_segment_parse`) — only relevant if the bot must *decode* an RLE'd inbound
   message; movement-only inbound is acks + position/spawn, so likely not on the
   P0 path. Confirmed as needed.
 
+## Extensibility (future behaviors)
+
+Movement is behavior #1, not the architecture. The `Tick(now)` loop dispatches to
+a set of active `IBotBehavior`s over the shared transport + session + ack
+foundation, so combat, spell casting, chat fan-out, grouping, and inventory (the
+fleet proposal's later scenarios) plug in as additional behaviors **without
+touching** the transport, session, or the `LoadBotJoin` provisioning. The join
+already provisions a combat/cast-capable entity (class + level), so those
+behaviors need only a new app-layer opcode encoder + a behavior class — not a new
+entry path. This is why bypass beats seeded accounts even long-term: the entity
+is real and capable, just created without the login ceremony. **P0 implements
+only `MovementBehavior`;** the seam is designed now, the behaviors are built
+later.
+
 ## Out of scope (later, per the fleet proposal)
 
 Combat (mob camps, melee/procs/Lua), chat fan-out (/say //shout/group), grouping,
 inventory/vendor, LFG/who, login/logout churn, and turbo/loss/latency knobs.
-These layer on top of the movement baseline after the capacity curve exists. The
-fleet runner/ladder/metrics and the 300-account DB seed are the **emu session's**
-deliverables, not this core's.
+These layer on top of the movement baseline via the `IBotBehavior` seam after the
+capacity curve exists. The fleet runner/ladder/metrics and the 300-account DB
+seed are the **emu session's** deliverables, not this core's.
