@@ -1,0 +1,20 @@
+{
+  "profiles": {
+    "Harness (App.config)": {
+      "commandName": "Project",
+      "comment": "Runs with the settings in App.config. Edit App.config to change bots/spawn/mode."
+    },
+    "1 bot – Qeynos (fixed)": {
+      "commandName": "Project",
+      "commandLineArgs": "BotCount=1 SpawnMode=Fixed SpawnX=5000 SpawnZ=17000"
+    },
+    "10 bots – Qeynos cluster": {
+      "commandName": "Project",
+      "commandLineArgs": "BotCount=10 SpawnMode=Fixed SpawnX=5000 SpawnZ=17000 ClusterId=1"
+    },
+    "25 bots – random over block A": {
+      "commandName": "Project",
+      "commandLineArgs": "BotCount=25 SpawnMode=Random SpawnX=8000 SpawnZ=13000 SpawnRangeX=3000 SpawnRangeZ=8000"
+    }
+  }
+}

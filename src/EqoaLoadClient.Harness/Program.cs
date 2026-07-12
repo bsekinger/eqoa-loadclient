@@ -3,59 +3,88 @@ using System.Numerics;
 using EqoaLoadClient.Core.Bot;
 using EqoaLoadClient.Core.Movement;
 using EqoaLoadClient.Core.Transport;
+using EqoaLoadClient.Harness;
 
-// usage: Harness <serverIp> <port> <joinOpcodeHex> [zoneId] [x y z] [durationSec]
-var ip = IPAddress.Parse(args[0]);
-int port = int.Parse(args[1]);
-ushort opcode = Convert.ToUInt16(args[2], 16);   // LoadBotJoin is a u16 GameOpcode (emu: 0x0BB0)
-ushort zone = args.Length > 3 ? ushort.Parse(args[3]) : (ushort)0;
-// The emu's zone bounds-check rejects a spawn with X or Z <= 0, so default to positive coords.
-var spawn = args.Length > 6 ? new Vector3(int.Parse(args[4]), int.Parse(args[5]), int.Parse(args[6])) : new Vector3(2000, 0, 2000);
-int durationSec = args.Length > 7 ? int.Parse(args[7]) : 0;   // 0 = run until Ctrl-C
+// Config-driven multi-bot runner. Settings come from App.config <appSettings>,
+// overridable on the command line as key=value (e.g. `dotnet run -- BotCount=10 SpawnMode=Random`).
+var cfg = FleetConfig.Load(args);
+Console.WriteLine($"[fleet] {cfg}");
 
-var min = spawn - new Vector3(500, 10, 500);
-var max = spawn + new Vector3(500, 10, 500);
-min.X = MathF.Max(1, min.X); min.Z = MathF.Max(1, min.Z);   // keep the whole region strictly positive in X/Z
-var region = new BoundingBoxRegion(min, max, spawn, seed: 1);
+var serverEp = new IPEndPoint(IPAddress.Parse(cfg.Str("ServerIp", "127.0.0.1")), cfg.Int("ServerPort", 10070));
+ushort opcode = cfg.Hex16("JoinOpcode", 0x0BB0);
+int botCount = Math.Max(1, cfg.Int("BotCount", 1));
+ushort zone = cfg.UShort("ZoneId", 0);
+bool random = cfg.Str("SpawnMode", "Fixed").Equals("Random", StringComparison.OrdinalIgnoreCase);
+int sx = cfg.Int("SpawnX", 5000), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17000);
+int rangeX = cfg.Int("SpawnRangeX", 3000), rangeZ = cfg.Int("SpawnRangeZ", 3000);
+int wander = cfg.Int("WanderRadius", 500);
+int intervalMs = cfg.Int("IntervalMs", 100);
+ushort cluster = cfg.UShort("ClusterId", 0);
+int durationSec = cfg.Int("DurationSec", 0);
+int seed = cfg.Int("Seed", 1);
+uint baseInstance = cfg.UInt("BaseInstanceId", 0x00010000);
+int baseSrcEp = cfg.Int("BaseSrcEndpoint", 0x0102);
 
-var inner = new UdpChannel(new IPEndPoint(ip, port));
-var ch = new CountingChannel(inner);
-var cfg = new BotConfig
+var rng = new Random(seed);
+var bots = new List<(BotClient bot, CountingChannel ch, UdpChannel inner)>(botCount);
+for (int i = 0; i < botCount; i++)
 {
-    SrcEndpoint = 0x0102, InstanceId = 0x00010000, BotIndex = 1,
-    ZoneId = zone, ClassId = 7, Level = 30, Cluster = 0,
-    JoinOpcode = opcode, IntervalMs = 100, Region = region,
-};
-var bot = new BotClient(cfg, ch);
+    int bx = sx, bz = sz;
+    if (random) { bx = sx + rng.Next(-rangeX, rangeX + 1); bz = sz + rng.Next(-rangeZ, rangeZ + 1); }
+    var spawn = new Vector3(bx, sy, bz);
+
+    var min = spawn - new Vector3(wander, 10, wander);
+    var max = spawn + new Vector3(wander, 10, wander);
+    min.X = MathF.Max(1, min.X); min.Z = MathF.Max(1, min.Z);   // stay strictly positive in X/Z
+    var region = new BoundingBoxRegion(min, max, spawn, seed + i);
+
+    var inner = new UdpChannel(serverEp);          // own socket (own UDP source port) per bot
+    var ch = new CountingChannel(inner);
+    var botCfg = new BotConfig
+    {
+        SrcEndpoint = (ushort)(baseSrcEp + i),     // unique per bot
+        InstanceId = baseInstance + (uint)i,       // unique per bot (emu keys on (addr, InstanceID))
+        BotIndex = (uint)i,
+        ZoneId = zone, ClassId = 7, Level = 30, Cluster = cluster,
+        JoinOpcode = opcode, IntervalMs = intervalMs, Region = region,
+    };
+    bots.Add((new BotClient(botCfg, ch), ch, inner));
+}
+Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? $"random within +/-({rangeX},{rangeZ}) of" : "at")} ({sx},{sy},{sz}) zone {zone}, " +
+                  $"{(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-Console.WriteLine($"bot -> {ip}:{port} zone {zone} spawn {spawn} opcode 0x{opcode:X4} " +
-                  $"duration {(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
+
+// One shared tick loop over all bots (the fleet-scheduler pattern the Core is built for).
 var sw = System.Diagnostics.Stopwatch.StartNew();
-long lastRecvReport = 0;
+long lastReport = 0;
+int tickDelayMs = Math.Max(5, intervalMs / 2);
 while (!cts.IsCancellationRequested && (durationSec == 0 || sw.Elapsed.TotalSeconds < durationSec))
 {
-    bot.Tick(sw.ElapsedMilliseconds);
-    if (ch.Received != lastRecvReport)   // note first/each server response on its own line
-    {
-        Console.WriteLine($"\n[{sw.Elapsed:mm\\:ss}] inbound from server: total {ch.Received}");
-        lastRecvReport = ch.Received;
-    }
-    Console.Write($"\rstate={bot.State} t={sw.Elapsed:mm\\:ss} sent={ch.Sent} recv={ch.Received}   ");
-    try { await Task.Delay(50, cts.Token); } catch (OperationCanceledException) { break; }
-}
-bot.Logout();
-Console.WriteLine($"\n--- smoke summary ---");
-Console.WriteLine($"final state : {bot.State}");
-Console.WriteLine($"elapsed     : {sw.Elapsed:mm\\:ss}");
-Console.WriteLine($"datagrams   : sent {ch.Sent}, received {ch.Received}");
-Console.WriteLine(ch.Received > 0
-    ? "RESULT: server responded — two-way DRDP confirmed (join parsed, server replied)."
-    : "RESULT: NO inbound from server (check reachability / CRC / framing / opcode / spawn coords).");
-inner.Dispose();
+    long now = sw.ElapsedMilliseconds;
+    foreach (var (bot, _, _) in bots) bot.Tick(now);
 
-/// Wraps the real channel to count datagrams for the smoke run.
+    if (sw.ElapsedMilliseconds - lastReport >= 1000)
+    {
+        lastReport = sw.ElapsedMilliseconds;
+        int sent = bots.Sum(b => b.ch.Sent), recv = bots.Sum(b => b.ch.Received);
+        int inWorld = bots.Count(b => b.bot.State == BotState.InWorld);
+        Console.Write($"\r[fleet] t={sw.Elapsed:mm\\:ss} bots={bots.Count} inWorld={inWorld} sent={sent} recv={recv}   ");
+    }
+    try { await Task.Delay(tickDelayMs, cts.Token); } catch (OperationCanceledException) { break; }
+}
+
+Console.WriteLine("\n[fleet] shutting down — logging out all bots...");
+foreach (var (bot, _, _) in bots) bot.Logout();
+foreach (var (_, _, inner) in bots) inner.Dispose();
+int totalSent = bots.Sum(b => b.ch.Sent), totalRecv = bots.Sum(b => b.ch.Received);
+Console.WriteLine($"[fleet] done. bots={bots.Count} elapsed={sw.Elapsed:mm\\:ss} sent={totalSent} received={totalRecv}");
+Console.WriteLine(totalRecv > 0
+    ? "[fleet] server responded — two-way DRDP confirmed."
+    : "[fleet] NO inbound (server down/crashing, or coords/wire).");
+
+/// Wraps the real channel to count datagrams for the run summary.
 sealed class CountingChannel(IUdpChannel inner) : IUdpChannel
 {
     public int Sent, Received;
