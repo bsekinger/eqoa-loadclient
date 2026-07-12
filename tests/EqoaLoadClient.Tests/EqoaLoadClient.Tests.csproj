@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EqoaLoadClient.Core\EqoaLoadClient.Core.csproj" />
+    <ProjectReference Include="..\..\src\EqoaLoadClient.Harness\EqoaLoadClient.Harness.csproj" />
   </ItemGroup>
 
 </Project>
