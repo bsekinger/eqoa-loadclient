@@ -1,0 +1,65 @@
+using EqoaLoadClient.Core.Movement;
+using EqoaLoadClient.Core.Session;
+using EqoaLoadClient.Core.Transport;
+
+namespace EqoaLoadClient.Core.Bot;
+
+public sealed class BotClient
+{
+    private readonly BotConfig _cfg;
+    private readonly IUdpChannel _ch;
+    private readonly DrdpConnection _conn;
+    private readonly BotContext _ctx;
+    private readonly IBotBehavior _movement = new MovementBehavior();
+
+    public BotState State { get; private set; } = BotState.New;
+
+    public BotClient(BotConfig cfg, IUdpChannel ch)
+    {
+        _cfg = cfg; _ch = ch;
+        _conn = new DrdpConnection(cfg.SrcEndpoint, cfg.InstanceId);
+        _ctx = new BotContext(_conn, cfg.Region, cfg.IntervalMs);
+    }
+
+    /// One unit of work. The fleet (or RunAsync) calls this on its clock.
+    public void Tick(long nowMs)
+    {
+        // drain inbound
+        while (_ch.TryReceive(out var dg)) _conn.OnInbound(dg);
+
+        switch (State)
+        {
+            case BotState.New:
+                var spawn = _cfg.Region.Spawn;
+                byte[] join = LoadBotJoin.Encode(_cfg.JoinOpcode, _cfg.BotIndex, _cfg.ZoneId,
+                    (int)spawn.X, (int)spawn.Y, (int)spawn.Z, _cfg.ClassId, _cfg.Level, _cfg.Cluster);
+                _conn.SendReliable(join);
+                _conn.Flush(nowMs, _ch);
+                State = BotState.InWorld;   // P0: proceed to movement immediately (emu injects entity)
+                break;
+
+            case BotState.InWorld:
+                _movement.Tick(nowMs, _ctx);
+                _conn.Flush(nowMs, _ch);
+                break;
+        }
+    }
+
+    public void Logout()
+    {
+        _conn.Close(_ch);
+        State = BotState.Closed;
+    }
+
+    /// Convenience self-driving loop for standalone/harness use.
+    public async Task RunAsync(CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!ct.IsCancellationRequested)
+        {
+            Tick(sw.ElapsedMilliseconds);
+            try { await Task.Delay(Math.Max(5, _cfg.IntervalMs / 2), ct); } catch (OperationCanceledException) { break; }
+        }
+        Logout();
+    }
+}
