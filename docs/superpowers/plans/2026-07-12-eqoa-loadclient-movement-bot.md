@@ -1247,8 +1247,8 @@ public struct InboundSegment
             ushort seq = r.ReadU16LE();
             r.ReadByte();                             // refnum (bot doesn't reconstruct payloads for P0)
             r.Pos += size;                            // skip payload
-            if (type >= 0xF8) return false;           // guard
-            if (type == 0xFB || type == 0xF9) p.ControlMessagesReceived.Add(seq);
+            if (type == 0xFB || type == 0xF9) p.ControlMessagesReceived.Add(seq); // control msgs the bot acks
+            else if (type >= 0xF8) return false;      // guard: reject OTHER reserved stream types
             else p.GameMessagesReceived.Add((type, seq));
         }
         return true;
