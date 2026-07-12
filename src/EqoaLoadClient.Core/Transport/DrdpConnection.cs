@@ -13,9 +13,9 @@ public sealed class DrdpConnection
     private ushort _segmentSeq = 1;              // seed 1
     private bool _identityConfirmed;             // sets NewInstance until true
 
-    private readonly ChannelState _control = new(0xFB);
     private readonly ChannelState _movement = new(0x40);
     private readonly AckState _acks = new();
+    private ushort _controlSeq = 1;              // reliable control-message seq (type 0xFB); no refnum/XOR-delta
 
     private sealed class Pending { public byte[] Datagram = default!; public long LastSendMs; public bool Acked; }
     private readonly List<Pending> _retransmit = new();
@@ -24,7 +24,11 @@ public sealed class DrdpConnection
 
     public DrdpConnection(ushort srcEp, uint instanceId) { _srcEp = srcEp; _instanceId = instanceId; }
 
-    public void SendReliable(ReadOnlySpan<byte> payload) => _pendingReliableMsg = _control.EncodeNext(payload);
+    public void SendReliable(ReadOnlySpan<byte> payload)
+    {
+        _pendingReliableMsg = ControlMessage.Encode(0xFB, _controlSeq, payload);
+        _controlSeq++;
+    }
     /// Queues a channel-0x40 movement message for the next flush and returns it (metrics hook).
     public byte[] SendMovement(ReadOnlySpan<byte> payload)
     { var m = _movement.EncodeNext(payload); _pendingMovementMsg = m; return m; }
@@ -45,13 +49,11 @@ public sealed class DrdpConnection
         // (b) The server's acks OF the bot's messages -> clear retransmit + advance XOR base:
         if (p.HasControlAck)
         {
-            _control.OnPeerAckedChannelSeq(p.ControlAckBase);
             foreach (var pend in _retransmit) pend.Acked = true;   // control reliables acked up to base
         }
         if (p.ChannelReceived.TryGetValue(0x40, out var movAck)) _movement.OnPeerAckedChannelSeq(movAck);
     }
 
-    public void NoteControlAcked(ushort seq) => _control.OnPeerAckedChannelSeq(seq);
     public void NoteMovementAcked(ushort seq) => _movement.OnPeerAckedChannelSeq(seq);
 
     public void Flush(long nowMs, IUdpChannel ch)
