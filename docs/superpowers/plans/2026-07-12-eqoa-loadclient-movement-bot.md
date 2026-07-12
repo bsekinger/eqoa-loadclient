@@ -902,8 +902,8 @@ public class GameMessageTests
         chan.EncodeNext(new byte[]{10,20,30,40});   // seq 1
         chan.OnPeerAckedChannelSeq(1);              // ackBase now 1, history head seq 1
         byte[] msg = chan.EncodeNext(new byte[]{10,25,30,44}); // seq 2
-        // refnum = 2 - 1 = 1; payload = new XOR base = 00,0F,00,0C
-        Assert.Equal(new byte[]{0x40, 0x04, 0x02,0x00, 0x01, 0x00,0x0F,0x00,0x0C}, msg);
+        // refnum = 2 - 1 = 1; payload = new XOR base: 10^10=00, 25^20=0D, 30^30=00, 44^40=04
+        Assert.Equal(new byte[]{0x40, 0x04, 0x02,0x00, 0x01, 0x00,0x0D,0x00,0x04}, msg);
     }
 
     [Fact]
