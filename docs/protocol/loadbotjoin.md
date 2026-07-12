@@ -11,7 +11,7 @@ DRDP session and begins accepting the bot's channel-`0x40` movement.
 |-----|------|----------|-------------------------------------------------------------|
 | 0   | u16  | opcode   | **`0x0BB0`** (emu-assigned `GameOpcode.LoadBotJoin`)         |
 | 2   | u32  | botIndex | 0..N-1, stable per bot                                       |
-| 6   | u16  | zoneId   | world/zone: Tunaria, Rathe, Odus, LavaStorm, Plane of Sky, Secrets |
+| 6   | u16  | worldId  | **world** (0=Tunaria 1=Rathe 2=Odus 3=LavaStorm 4=PlaneOfSky 5=Secrets). NB: the emu handler reads this same u16 as `zoneId` — byte-identical, just a clearer name on the bot side (a world contains many grid *zones*). |
 | 8   | s32  | x        | spawn X (world units) — **must be > 0** (emu bounds-check)  |
 | 12  | s32  | y        | spawn Y                                                     |
 | 16  | s32  | z        | spawn Z — **must be > 0** (emu bounds-check)                |
@@ -37,8 +37,8 @@ outer-frame parser handles this (0x1000 set ⇒ addrA absent, per
 
 ## Emu handler must
 
-1. Map (peer UDP addr, InstanceID) → a new lightweight entity in `zoneId` at
-   (x,y,z), with `classId`/`level` so later combat/cast behaviors work.
+1. Map (peer UDP addr, InstanceID) → a new lightweight entity in world `worldId`
+   at (x,y,z), with `classId`/`level` so later combat/cast behaviors work.
 2. Start accepting channel-`0x40` movement for that session (see
    `eqoa-bridge/findings/systems/drdp-channel-0x40-movement-payload`).
 3. Optionally reply with the assigned entity id (u32) as a reliable control

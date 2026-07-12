@@ -31,7 +31,7 @@ public sealed class BotClient
         {
             case BotState.New:
                 var spawn = _cfg.Region.Spawn;
-                byte[] join = LoadBotJoin.Encode(_cfg.JoinOpcode, _cfg.BotIndex, _cfg.ZoneId,
+                byte[] join = LoadBotJoin.Encode(_cfg.JoinOpcode, _cfg.BotIndex, _cfg.WorldId,
                     (int)spawn.X, (int)spawn.Y, (int)spawn.Z, _cfg.ClassId, _cfg.Level, _cfg.Cluster);
                 _conn.SendReliable(join);
                 _conn.Flush(nowMs, _ch);

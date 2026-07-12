@@ -19,7 +19,7 @@ public class BotClientTests
         var cfg = new BotConfig
         {
             SrcEndpoint = 0x0102, InstanceId = 0x00010000, BotIndex = 1,
-            ZoneId = 1, ClassId = 7, Level = 30, Cluster = 0,
+            WorldId = 1, ClassId = 7, Level = 30, Cluster = 0,
             JoinOpcode = 0x00000901, IntervalMs = 100,
             Region = new BoundingBoxRegion(new Vector3(0,0,0), new Vector3(100,10,100), new Vector3(50,5,50), 1),
         };

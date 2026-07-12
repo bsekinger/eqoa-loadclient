@@ -43,7 +43,7 @@ public sealed class FleetConfig
 
     public override string ToString() =>
         $"server={Str("ServerIp","?")}:{Int("ServerPort",0)} opcode=0x{Hex16("JoinOpcode",0):X4} " +
-        $"bots={Int("BotCount",1)} zone={UShort("ZoneId",0)} mode={Str("SpawnMode","Fixed")} " +
+        $"bots={Int("BotCount",1)} world={UShort("WorldID",0)} mode={Str("SpawnMode","Fixed")} " +
         $"spawn=({Int("SpawnX",0)},{Int("SpawnY",0)},{Int("SpawnZ",0)}) wander={Int("WanderRadius",500)} " +
         $"interval={Int("IntervalMs",100)}ms duration={Int("DurationSec",0)}s";
 }

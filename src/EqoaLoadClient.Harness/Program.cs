@@ -13,7 +13,7 @@ Console.WriteLine($"[fleet] {cfg}");
 var serverEp = new IPEndPoint(IPAddress.Parse(cfg.Str("ServerIp", "127.0.0.1")), cfg.Int("ServerPort", 10070));
 ushort opcode = cfg.Hex16("JoinOpcode", 0x0BB0);
 int botCount = Math.Max(1, cfg.Int("BotCount", 1));
-ushort zone = cfg.UShort("ZoneId", 0);
+ushort world = cfg.UShort("WorldID", 0);
 bool random = cfg.Str("SpawnMode", "Fixed").Equals("Random", StringComparison.OrdinalIgnoreCase);
 int sx = cfg.Int("SpawnX", 5000), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17000);
 int rangeX = cfg.Int("SpawnRangeX", 3000), rangeZ = cfg.Int("SpawnRangeZ", 3000);
@@ -45,12 +45,12 @@ for (int i = 0; i < botCount; i++)
         SrcEndpoint = (ushort)(baseSrcEp + i),     // unique per bot
         InstanceId = baseInstance + (uint)i,       // unique per bot (emu keys on (addr, InstanceID))
         BotIndex = (uint)i,
-        ZoneId = zone, ClassId = 7, Level = 30, Cluster = cluster,
+        WorldId = world, ClassId = 7, Level = 30, Cluster = cluster,
         JoinOpcode = opcode, IntervalMs = intervalMs, Region = region,
     };
     bots.Add((new BotClient(botCfg, ch), ch, inner));
 }
-Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? $"random within +/-({rangeX},{rangeZ}) of" : "at")} ({sx},{sy},{sz}) zone {zone}, " +
+Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? $"random within +/-({rangeX},{rangeZ}) of" : "at")} ({sx},{sy},{sz}) world {world}, " +
                   $"{(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
 
 using var cts = new CancellationTokenSource();
