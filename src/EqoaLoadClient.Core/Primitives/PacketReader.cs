@@ -7,6 +7,8 @@ public ref struct PacketReader
     public PacketReader(ReadOnlySpan<byte> b) { _b = b; Pos = 0; }
     public bool AtEnd => Pos >= _b.Length;
     public int Remaining => _b.Length - Pos;
+    /// The unread bytes from the current position (for variable-length payloads like RLE).
+    public ReadOnlySpan<byte> RemainingSpan => _b[Pos..];
     /// True when n bytes can still be read/skipped from the current position without overrunning.
     public bool CanRead(int n) => n >= 0 && Pos + n <= _b.Length;
     public byte ReadByte() => _b[Pos++];

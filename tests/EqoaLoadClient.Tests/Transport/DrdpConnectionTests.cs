@@ -82,8 +82,9 @@ public class DrdpConnectionTests
         seg.WriteByte(0x01);                 // server seg flags: seg-ack
         seg.WriteU16LE(9);                   // server segment seq (bot will echo as flag 0x01)
         seg.WriteU16LE(3);                   // flag 0x01: server's ack of bot seg seq (irrelevant here)
-        // game message on channel 0x00 (bot owes a flag-0x10 ack): type,size,seq,refnum,payload
-        seg.WriteByte(0x00); seg.WriteByte(1); seg.WriteU16LE(0x28); seg.WriteByte(0); seg.WriteByte(0x11);
+        // game message on channel 0x00 (bot owes a flag-0x10 ack): type,size(decoded),seq,refnum,RLE-payload
+        seg.WriteByte(0x00); seg.WriteByte(1); seg.WriteU16LE(0x28); seg.WriteByte(0); // type,size=1,seq,refnum
+        seg.WriteByte(0x10); seg.WriteByte(0x11); seg.WriteByte(0x00);                 // RLE({0x11}) = 10 11 00
         // control message (corrected format, NO refnum): type 0xFB, size 2, seq 7, payload {0xAA,0xBB}
         seg.WriteByte(0xFB); seg.WriteByte(2); seg.WriteU16LE(7); seg.WriteByte(0xAA); seg.WriteByte(0xBB);
         byte[] serverDg = OuterFrame.Build(srcEp: 0x2001, dstEp: 0x0102,

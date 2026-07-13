@@ -66,12 +66,13 @@ public struct InboundSegment
                 int size = r.ReadByte();
                 if (size == 0xFF) size = r.ReadU16LE();
 
-                if (type < 0xF8)                          // game message: seq + refnum + payload
+                if (type < 0xF8)                          // game message: seq + refnum + RLE payload (size = DECODED len)
                 {
                     ushort seq = r.ReadU16LE();
                     r.ReadByte();                         // refnum (bot doesn't reconstruct payloads for P0)
-                    if (!r.CanRead(size)) return false;
-                    r.Pos += size;                        // skip payload
+                    // The wire payload is RLE-encoded (variable length != size); consume it via the RLE stream.
+                    if (!Rle.TryDecode(r.RemainingSpan, out _, out int consumed)) return false;
+                    r.Pos += consumed;
                     p.GameMessagesReceived.Add((type, seq));
                 }
                 else if (type == 0xF9 || type == 0xFA || type == 0xFB)  // seq-bearing control: NO refnum
