@@ -5,8 +5,8 @@ using EqoaLoadClient.Core.Movement;
 using EqoaLoadClient.Core.Transport;
 using EqoaLoadClient.Harness;
 
-// Config-driven multi-bot runner. Settings come from App.config <appSettings>,
-// overridable on the command line as key=value (e.g. `dotnet run -- BotCount=10 SpawnMode=Random`).
+// Config-driven fleet runner. Settings come from App.config <appSettings>, overridable on the
+// command line as key=value (e.g. `dotnet run -- BotCount=200 SpawnMode=Clustered RampMs=150000`).
 var cfg = FleetConfig.Load(args);
 Console.WriteLine($"[fleet] {cfg}");
 
@@ -14,87 +14,87 @@ var serverEp = new IPEndPoint(IPAddress.Parse(cfg.Str("ServerIp", "127.0.0.1")),
 ushort opcode = cfg.Hex16("JoinOpcode", 0x0BB0);
 int botCount = Math.Max(1, cfg.Int("BotCount", 1));
 ushort world = cfg.UShort("WorldID", 0);
-bool random = cfg.Str("SpawnMode", "Fixed").Equals("Random", StringComparison.OrdinalIgnoreCase);
-int sx = cfg.Int("SpawnX", 5000), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17000);
+string spawnMode = cfg.Str("SpawnMode", "Clustered");
+bool clustered = spawnMode.Equals("Clustered", StringComparison.OrdinalIgnoreCase);
+bool random = spawnMode.Equals("Random", StringComparison.OrdinalIgnoreCase);
+int sx = cfg.Int("SpawnX", 5950), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17950);
 int intervalMs = cfg.Int("IntervalMs", 100);
 int roamSpeed = cfg.Int("RoamSpeed", 100);
-
-// Resolve the world's valid roaming area (Tunaria seeded from StartZones' all-land blocks; other
-// worlds fall back to a box near spawn until the per-world grid lands). Bots roam the whole valid
-// extent — not a box around spawn — so they sweep across cells and trigger zone loads.
-if (!WorldBounds.TryGetValidArea(world, out var area))
-{
-    float fx = MathF.Max(1, sx - 6000), fz = MathF.Max(1, sz - 6000);
-    area = new RectUnionArea((fx, fz, sx + 6000, sz + 6000));
-    Console.WriteLine($"[fleet] world {world}: no valid-cell grid yet — roaming a fallback box around spawn.");
-}
 ushort cluster = cfg.UShort("ClusterId", 0);
 int durationSec = cfg.Int("DurationSec", 0);
 int seed = cfg.Int("Seed", 1);
 uint baseInstance = cfg.UInt("BaseInstanceId", 0x00010000);
 int baseSrcEp = cfg.Int("BaseSrcEndpoint", 0x0102);
 
-var bots = new List<(BotClient bot, CountingChannel ch, UdpChannel inner)>(botCount);
+// Realism dials: staggered ramp + tick-loop sharding (so the harness is not the bottleneck at high N).
+int rampMs = cfg.Int("RampMs", 0);
+int tickThreads = Math.Max(1, cfg.Int("TickThreads", 1));
+
+// Hub clustering (Clustered mode): weighted hubs + in-hub wander, so cold-zone count stays bounded.
+string hubSpec = cfg.Str("Hubs", "5950,17950,45; 15315,11715,30; 15750,20373,25");
+float hubJitter = cfg.Int("HubJitter", 350);
+float hubWander = cfg.Int("HubWander", 400);
+
+// Fixed/Random roam the world's valid area; Clustered wanders a per-hub box instead (no area needed).
+IValidArea? area = null;
+if (!clustered)
+{
+    if (!WorldBounds.TryGetValidArea(world, out area))
+    {
+        float fx = MathF.Max(1, sx - 6000), fz = MathF.Max(1, sz - 6000);
+        area = new RectUnionArea((fx, fz, sx + 6000, sz + 6000));
+        Console.WriteLine($"[fleet] world {world}: no valid-cell grid yet — roaming a fallback box around spawn.");
+    }
+}
+
+IReadOnlyList<Hub> hubs = Array.Empty<Hub>();
+int[] hubAssignment = Array.Empty<int>();
+if (clustered)
+{
+    hubs = HubClustering.ParseHubs(hubSpec);
+    hubAssignment = HubClustering.AssignHubs(botCount, hubs, seed);
+}
+
+var bots = new List<FleetBot>(botCount);
 for (int i = 0; i < botCount; i++)
 {
-    // Fixed => all bots at the configured spawn; Random => each bot at a random valid world point.
-    Vector3? fixedSpawn = random ? null : new Vector3(sx, sy, sz);
-    var region = new WorldRegion(area, y: sy, seed: seed + i, fixedSpawn: fixedSpawn);
+    IMovementRegion region;
+    if (clustered)
+    {
+        region = HubClustering.RegionFor(hubs[hubAssignment[i]], sy, hubJitter, hubWander, seed + i);
+    }
+    else
+    {
+        Vector3? fixedSpawn = random ? null : new Vector3(sx, sy, sz);
+        region = new WorldRegion(area!, sy, seed + i, fixedSpawn);
+    }
 
     var inner = new UdpChannel(serverEp);          // own socket (own UDP source port) per bot
     var ch = new CountingChannel(inner);
     var botCfg = new BotConfig
     {
-        SrcEndpoint = (ushort)(baseSrcEp + i),     // unique per bot
+        SrcEndpoint = (ushort)(baseSrcEp + i),     // unique per bot -> distinct emu session (not all "Session 0")
         InstanceId = baseInstance + (uint)i,       // unique per bot (emu keys on (addr, InstanceID))
         BotIndex = (uint)i,
         WorldId = world, ClassId = 7, Level = 30, Cluster = cluster,
         JoinOpcode = opcode, IntervalMs = intervalMs, RoamSpeed = roamSpeed, Region = region,
     };
-    bots.Add((new BotClient(botCfg, ch), ch, inner));
+    bots.Add(new FleetBot
+    {
+        Bot = new BotClient(botCfg, ch),
+        Channel = ch,
+        Inner = inner,
+        JoinAtMs = JoinSchedule.OffsetMs(i, botCount, rampMs),
+    });
 }
-Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? "at random valid points in" : $"at ({sx},{sy},{sz}) in")} world {world} " +
-                  $"(roam {roamSpeed} u/s), {(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
+
+string where = clustered ? $"{hubs.Count} hub(s)" : random ? "random valid points" : $"fixed ({sx},{sy},{sz})";
+Console.WriteLine($"[fleet] {bots.Count} bot(s), world {world}, {where}, ramp {rampMs}ms, {tickThreads} tick-thread(s), " +
+                  $"roam {roamSpeed}u/s, {(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// One shared tick loop over all bots (the fleet-scheduler pattern the Core is built for).
-var sw = System.Diagnostics.Stopwatch.StartNew();
-long lastReport = 0;
-int tickDelayMs = Math.Max(5, intervalMs / 2);
-while (!cts.IsCancellationRequested && (durationSec == 0 || sw.Elapsed.TotalSeconds < durationSec))
-{
-    long now = sw.ElapsedMilliseconds;
-    foreach (var (bot, _, _) in bots) bot.Tick(now);
-
-    if (sw.ElapsedMilliseconds - lastReport >= 1000)
-    {
-        lastReport = sw.ElapsedMilliseconds;
-        int sent = bots.Sum(b => b.ch.Sent), recv = bots.Sum(b => b.ch.Received);
-        int inWorld = bots.Count(b => b.bot.State == BotState.InWorld);
-        Console.Write($"\r[fleet] t={sw.Elapsed:mm\\:ss} bots={bots.Count} inWorld={inWorld} sent={sent} recv={recv}   ");
-    }
-    try { await Task.Delay(tickDelayMs, cts.Token); } catch (OperationCanceledException) { break; }
-}
-
-Console.WriteLine("\n[fleet] shutting down — logging out all bots...");
-foreach (var (bot, _, _) in bots) bot.Logout();
-foreach (var (_, _, inner) in bots) inner.Dispose();
-int totalSent = bots.Sum(b => b.ch.Sent), totalRecv = bots.Sum(b => b.ch.Received);
-Console.WriteLine($"[fleet] done. bots={bots.Count} elapsed={sw.Elapsed:mm\\:ss} sent={totalSent} received={totalRecv}");
-Console.WriteLine(totalRecv > 0
-    ? "[fleet] server responded — two-way DRDP confirmed."
-    : "[fleet] NO inbound (server down/crashing, or coords/wire).");
-
-/// Wraps the real channel to count datagrams for the run summary.
-sealed class CountingChannel(IUdpChannel inner) : IUdpChannel
-{
-    public int Sent, Received;
-    public void Send(ReadOnlySpan<byte> dg) { Sent++; inner.Send(dg); }
-    public bool TryReceive(out byte[] dg)
-    {
-        if (inner.TryReceive(out dg)) { Received++; return true; }
-        return false;
-    }
-}
+var runner = new FleetRunner(bots, tickThreads, intervalMs, durationSec);
+runner.Run(cts.Token);
+Console.WriteLine("[fleet] done.");
