@@ -12,12 +12,14 @@ public struct InboundSegment
     public Dictionary<byte, ushort> ChannelReceived;           // server's per-channel acks of bot game seqs
     public List<ushort> ControlMessagesReceived;               // control-msg seqs the bot must ack
     public List<(byte chan, ushort seq)> GameMessagesReceived; // game msgs the bot must ack
+    public List<ushort> ControlOpcodes;                        // first u16 of each 0xfb/0xf9 control payload (e.g. the join reply)
 
     public static bool TryParse(ReadOnlySpan<byte> datagram, out InboundSegment p)
     {
         p = new InboundSegment
         {
-            ChannelReceived = new(), ControlMessagesReceived = new(), GameMessagesReceived = new()
+            ChannelReceived = new(), ControlMessagesReceived = new(), GameMessagesReceived = new(),
+            ControlOpcodes = new()
         };
         if (datagram.Length < 8) return false;
         // A lying `size`/skip or a truncated datagram must yield `false`, never an exception:
@@ -79,6 +81,11 @@ public struct InboundSegment
                 {
                     ushort seq = r.ReadU16LE();
                     if (!r.CanRead(size)) return false;
+                    if (size >= 2 && (type == 0xFB || type == 0xF9))     // capture the opcode (first u16 of payload)
+                    {
+                        var pl = r.RemainingSpan;
+                        p.ControlOpcodes.Add((ushort)(pl[0] | pl[1] << 8));
+                    }
                     r.Pos += size;                        // skip payload
                     if (type == 0xFB || type == 0xF9) p.ControlMessagesReceived.Add(seq); // 0xFA = keepalive, not acked
                 }

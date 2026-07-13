@@ -16,6 +16,10 @@ public sealed class DrdpConnection
     private readonly ChannelState _movement = new(0x40);
     private readonly AckState _acks = new();
     private ushort _controlSeq = 1;              // reliable control-message seq (type 0xFB); no refnum/XOR-delta
+    private readonly HashSet<ushort> _recvControlOpcodes = new(); // opcodes of inbound control messages (e.g. the join reply)
+
+    /// True once an inbound reliable control message carrying `opcode` has been seen.
+    public bool ReceivedControlOpcode(ushort opcode) => _recvControlOpcodes.Contains(opcode);
 
     private sealed class Pending { public byte[] Datagram = default!; public long LastSendMs; public bool Acked; public ushort Seq; }
     private readonly List<Pending> _retransmit = new();
@@ -50,6 +54,7 @@ public sealed class DrdpConnection
             _acks.OnInboundSegmentSeq(p.SegmentSeq);
             foreach (var seq in p.ControlMessagesReceived) _acks.OnInboundControlSeq(seq);
             foreach (var (chan, seq) in p.GameMessagesReceived) _acks.NoteChannelReceived(chan, seq);
+            foreach (var op in p.ControlOpcodes) _recvControlOpcodes.Add(op);
 
             // (b) The server's acks OF the bot's messages -> clear retransmit + advance XOR base:
             if (p.HasControlAck)

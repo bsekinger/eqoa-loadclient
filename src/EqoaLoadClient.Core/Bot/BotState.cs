@@ -1,2 +1,3 @@
 namespace EqoaLoadClient.Core.Bot;
-public enum BotState { New, Establishing, InWorld, Closed }
+/// New -> Joining (join sent, awaiting the server's reply) -> InWorld (movement starts) -> Closed.
+public enum BotState { New, Joining, InWorld, Closed }

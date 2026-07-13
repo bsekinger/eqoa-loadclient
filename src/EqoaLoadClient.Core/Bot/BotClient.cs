@@ -35,7 +35,15 @@ public sealed class BotClient
                     (int)spawn.X, (int)spawn.Y, (int)spawn.Z, _cfg.ClassId, _cfg.Level, _cfg.Cluster);
                 _conn.SendReliable(join);
                 _conn.Flush(nowMs, _ch);
-                State = BotState.InWorld;   // P0: proceed to movement immediately (emu injects entity)
+                State = BotState.Joining;
+                break;
+
+            case BotState.Joining:
+                // Keep flushing (retransmit the join + ack the server's reply); do NOT send movement
+                // yet — the server NREs if channel-0x40 movement arrives before the character exists.
+                // Advance to InWorld only once the server echoes the join opcode (its LoadBotJoin reply).
+                _conn.Flush(nowMs, _ch);
+                if (_conn.ReceivedControlOpcode(_cfg.JoinOpcode)) State = BotState.InWorld;
                 break;
 
             case BotState.InWorld:
