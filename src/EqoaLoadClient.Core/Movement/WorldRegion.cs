@@ -18,7 +18,10 @@ public sealed class WorldRegion : IMovementRegion
     /// (spreads a fleet across the whole world).</param>
     public WorldRegion(IValidArea area, float y, int seed, Vector3? fixedSpawn = null)
     {
-        _area = area; _y = y; _rng = new Random(seed);
+        _area = area; _y = y;
+        // Decorrelate: new Random(1), new Random(2)... yield correlated first values, so adjacent-index
+        // bots would spawn together and head the same way. Avalanche-mix the seed so every bot differs.
+        _rng = new Random(MixSeed(seed));
         _heading = (float)(_rng.NextDouble() * 2 * Math.PI - Math.PI);
         Spawn = fixedSpawn is Vector3 s && _area.Contains(s.X, s.Z)
             ? new Vector3(s.X, y, s.Z)
@@ -58,5 +61,15 @@ public sealed class WorldRegion : IMovementRegion
             if (_area.Contains(x, z)) return new Vector3(x, _y, z);
         }
         return new Vector3((minX + maxX) / 2, _y, (minZ + maxZ) / 2);   // fallback: extent center
+    }
+
+    /// Avalanche hash (splitmix-style) so sequential per-bot seeds map to well-separated RNG seeds.
+    private static int MixSeed(int seed)
+    {
+        uint h = (uint)seed;
+        h ^= h >> 16; h *= 0x7feb352du;
+        h ^= h >> 15; h *= 0x846ca68bu;
+        h ^= h >> 16;
+        return (int)h;
     }
 }

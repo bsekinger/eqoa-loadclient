@@ -57,6 +57,38 @@ public class WorldRegionTests
     }
 
     [Fact]
+    public void Adjacent_seed_bots_roam_in_diverse_directions()
+    {
+        // Each fleet bot seeds with seed+i (1,2,3...). Legacy new Random(smallSeed) correlates
+        // adjacent seeds -> without decorrelation, bots would all head the same way / spawn together.
+        var dirs = new List<Vector2>();
+        for (int i = 0; i < 60; i++)
+        {
+            var r = new WorldRegion(Tunaria(), 50f, seed: i, fixedSpawn: new Vector3(10000, 50, 12000));
+            r.NextStep(r.Spawn, stepUnits: 100f, out float h);
+            dirs.Add(new Vector2(MathF.Cos(h), MathF.Sin(h)));
+        }
+        // headings must populate all four quadrants (a correlated seed would clump into one/two)
+        Assert.Contains(dirs, d => d.X > 0 && d.Y > 0);
+        Assert.Contains(dirs, d => d.X < 0 && d.Y > 0);
+        Assert.Contains(dirs, d => d.X > 0 && d.Y < 0);
+        Assert.Contains(dirs, d => d.X < 0 && d.Y < 0);
+    }
+
+    [Fact]
+    public void Random_spawns_are_spread_out_not_clustered()
+    {
+        // 50 bots, random valid spawn each; decorrelated seeds => many distinct cells, not a clump.
+        var cells = new HashSet<(int, int)>();
+        for (int i = 0; i < 50; i++)
+        {
+            var s = new WorldRegion(Tunaria(), 50f, seed: i).Spawn;
+            cells.Add(((int)MathF.Floor(s.X / 2000), (int)MathF.Floor(s.Z / 2000)));
+        }
+        Assert.True(cells.Count >= 8, $"spawns clustered into only {cells.Count} cells");
+    }
+
+    [Fact]
     public void CellGridArea_maps_points_to_2000_unit_cells()
     {
         var area = new CellGridArea(new[] { (2, 8), (3, 8) });
