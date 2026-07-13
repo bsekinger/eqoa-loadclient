@@ -11,7 +11,8 @@ public sealed class MovementBehavior : IBotBehavior
         ctx.LastMovementMs = nowMs;
 
         var prev = ctx.Position;
-        var next = ctx.Region.NextStep(prev, stepUnits: 30f, out float heading);
+        // step = speed × tick; ~100 u/s over 100 ms = 10 u/tick, a 2000-unit cell in ~20s.
+        var next = ctx.Region.NextStep(prev, stepUnits: ctx.RoamSpeed * ctx.IntervalMs / 1000f, out float heading);
         ctx.Position = next;
 
         ctx.State.X = next.X; ctx.State.Y = next.Y; ctx.State.Z = next.Z;

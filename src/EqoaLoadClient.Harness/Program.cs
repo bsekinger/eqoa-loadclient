@@ -16,27 +16,30 @@ int botCount = Math.Max(1, cfg.Int("BotCount", 1));
 ushort world = cfg.UShort("WorldID", 0);
 bool random = cfg.Str("SpawnMode", "Fixed").Equals("Random", StringComparison.OrdinalIgnoreCase);
 int sx = cfg.Int("SpawnX", 5000), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17000);
-int rangeX = cfg.Int("SpawnRangeX", 3000), rangeZ = cfg.Int("SpawnRangeZ", 3000);
-int wander = cfg.Int("WanderRadius", 500);
 int intervalMs = cfg.Int("IntervalMs", 100);
+int roamSpeed = cfg.Int("RoamSpeed", 100);
+
+// Resolve the world's valid roaming area (Tunaria seeded from StartZones' all-land blocks; other
+// worlds fall back to a box near spawn until the per-world grid lands). Bots roam the whole valid
+// extent — not a box around spawn — so they sweep across cells and trigger zone loads.
+if (!WorldBounds.TryGetValidArea(world, out var area))
+{
+    float fx = MathF.Max(1, sx - 6000), fz = MathF.Max(1, sz - 6000);
+    area = new RectUnionArea((fx, fz, sx + 6000, sz + 6000));
+    Console.WriteLine($"[fleet] world {world}: no valid-cell grid yet — roaming a fallback box around spawn.");
+}
 ushort cluster = cfg.UShort("ClusterId", 0);
 int durationSec = cfg.Int("DurationSec", 0);
 int seed = cfg.Int("Seed", 1);
 uint baseInstance = cfg.UInt("BaseInstanceId", 0x00010000);
 int baseSrcEp = cfg.Int("BaseSrcEndpoint", 0x0102);
 
-var rng = new Random(seed);
 var bots = new List<(BotClient bot, CountingChannel ch, UdpChannel inner)>(botCount);
 for (int i = 0; i < botCount; i++)
 {
-    int bx = sx, bz = sz;
-    if (random) { bx = sx + rng.Next(-rangeX, rangeX + 1); bz = sz + rng.Next(-rangeZ, rangeZ + 1); }
-    var spawn = new Vector3(bx, sy, bz);
-
-    var min = spawn - new Vector3(wander, 10, wander);
-    var max = spawn + new Vector3(wander, 10, wander);
-    min.X = MathF.Max(1, min.X); min.Z = MathF.Max(1, min.Z);   // stay strictly positive in X/Z
-    var region = new BoundingBoxRegion(min, max, spawn, seed + i);
+    // Fixed => all bots at the configured spawn; Random => each bot at a random valid world point.
+    Vector3? fixedSpawn = random ? null : new Vector3(sx, sy, sz);
+    var region = new WorldRegion(area, y: sy, seed: seed + i, fixedSpawn: fixedSpawn);
 
     var inner = new UdpChannel(serverEp);          // own socket (own UDP source port) per bot
     var ch = new CountingChannel(inner);
@@ -46,12 +49,12 @@ for (int i = 0; i < botCount; i++)
         InstanceId = baseInstance + (uint)i,       // unique per bot (emu keys on (addr, InstanceID))
         BotIndex = (uint)i,
         WorldId = world, ClassId = 7, Level = 30, Cluster = cluster,
-        JoinOpcode = opcode, IntervalMs = intervalMs, Region = region,
+        JoinOpcode = opcode, IntervalMs = intervalMs, RoamSpeed = roamSpeed, Region = region,
     };
     bots.Add((new BotClient(botCfg, ch), ch, inner));
 }
-Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? $"random within +/-({rangeX},{rangeZ}) of" : "at")} ({sx},{sy},{sz}) world {world}, " +
-                  $"{(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
+Console.WriteLine($"[fleet] started {bots.Count} bot(s) {(random ? "at random valid points in" : $"at ({sx},{sy},{sz}) in")} world {world} " +
+                  $"(roam {roamSpeed} u/s), {(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };

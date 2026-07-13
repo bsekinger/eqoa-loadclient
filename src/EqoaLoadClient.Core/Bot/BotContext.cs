@@ -11,6 +11,7 @@ public sealed class BotContext
     public DrdpConnection Conn { get; }
     public IMovementRegion Region { get; }
     public int IntervalMs { get; }
+    public float RoamSpeed { get; set; } = 100f;   // units/sec, set from BotConfig by BotClient
     public Vector3 Position { get; set; }
     public MovementState State;
     public long LastMovementMs { get; set; } = -100_000; // safe sentinel (avoids overflow on first tick)
