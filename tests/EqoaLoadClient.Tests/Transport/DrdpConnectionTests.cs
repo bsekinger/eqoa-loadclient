@@ -51,6 +51,28 @@ public class DrdpConnectionTests
         Assert.Equal(2, ch.Sent.Count);
     }
 
+    // Read a datagram's outer flags and report whether NewInstance (0x80000) is set.
+    private static bool HasNewInstance(byte[] dg)
+    {
+        var r = new PacketReader(dg);
+        r.ReadU16LE(); r.ReadU16LE();               // src, dst endpoint
+        r.TryReadLeb128(out ulong flagsLen);
+        return ((uint)flagsLen & OuterFrame.FlagNewInstance) != 0;
+    }
+
+    [Fact]
+    public void Retransmit_does_not_repeat_new_instance()
+    {
+        var conn = new DrdpConnection(0x0102, 0xAABBCCDD);
+        var ch = new FakeChannel();
+        conn.SendReliable(new byte[] { 0x01 });
+        conn.Flush(0, ch);                          // first datagram establishes the session
+        conn.Flush(1200, ch);                       // retransmit past the interval
+        Assert.Equal(2, ch.Sent.Count);
+        Assert.True(HasNewInstance(ch.Sent[0]));    // NewInstance only on the first...
+        Assert.False(HasNewInstance(ch.Sent[1]));   // ...never on retransmits (no session churn)
+    }
+
     [Fact]
     public void Control_ack_clears_only_retransmits_below_base()
     {
@@ -59,7 +81,6 @@ public class DrdpConnectionTests
 
         conn.SendReliable(new byte[] { 0x01 }); conn.Flush(0, ch);   // control seq 1
         conn.SendReliable(new byte[] { 0x02 }); conn.Flush(0, ch);   // control seq 2
-        byte[] dg1 = ch.Sent[0], dg2 = ch.Sent[1];
 
         // Server next-expected control seq = 2 => seqs strictly < 2 acked => only seq 1.
         conn.OnInbound(BuildControlAck(segSeq: 5, controlBase: 2));
@@ -68,8 +89,12 @@ public class DrdpConnectionTests
         conn.Flush(1200, ch);                                        // past resend interval
         var resends = ch.Sent.Skip(before).ToList();
 
-        Assert.Contains(resends, x => x.SequenceEqual(dg2));        // seq 2 unacked -> retransmitted
-        Assert.DoesNotContain(resends, x => x.SequenceEqual(dg1));  // seq 1 acked -> not retransmitted
+        // Retransmits repack (fresh bytes), so verify by content: seq 2 resent, seq 1 not.
+        var resentControlSeqs = new List<ushort>();
+        foreach (var dg in resends)
+            if (InboundSegment.TryParse(dg, out var p)) resentControlSeqs.AddRange(p.ControlMessagesReceived);
+        Assert.Contains((ushort)2, resentControlSeqs);
+        Assert.DoesNotContain((ushort)1, resentControlSeqs);
     }
 
     // G1: end-to-end. A server datagram carrying a segment (flag 0x01 seg-ack), a game-channel

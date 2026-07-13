@@ -11,7 +11,7 @@ public sealed class DrdpConnection
     private readonly uint _instanceId;
     private ushort _dstEp = WildcardDst;
     private ushort _segmentSeq = 1;              // seed 1
-    private bool _identityConfirmed;             // sets NewInstance until true
+    private bool _newInstanceSent;               // NewInstance goes on the FIRST datagram only (keeps one sticky session)
 
     private readonly ChannelState _movement = new(0x40);
     private readonly AckState _acks = new();
@@ -21,7 +21,7 @@ public sealed class DrdpConnection
     /// True once an inbound reliable control message carrying `opcode` has been seen.
     public bool ReceivedControlOpcode(ushort opcode) => _recvControlOpcodes.Contains(opcode);
 
-    private sealed class Pending { public byte[] Datagram = default!; public long LastSendMs; public bool Acked; public ushort Seq; }
+    private sealed class Pending { public byte[] Message = default!; public long LastSendMs; public bool Acked; public ushort Seq; }
     private readonly List<Pending> _retransmit = new();
     private byte[]? _pendingReliableMsg;         // encoded control message awaiting first flush
     private ushort _pendingReliableSeq;          // control seq of _pendingReliableMsg (for retransmit reaping)
@@ -46,9 +46,8 @@ public sealed class DrdpConnection
         {
             if (!InboundSegment.TryParse(datagram, out var p)) return;
 
-            // Learn the server's endpoint id; identity is confirmed once we hear back.
+            // Learn the server's endpoint id.
             _dstEp = p.ServerEndpoint;
-            _identityConfirmed = true;
 
             // (a) Acks the bot OWES the server:
             _acks.OnInboundSegmentSeq(p.SegmentSeq);
@@ -73,10 +72,12 @@ public sealed class DrdpConnection
 
     public void Flush(long nowMs, IUdpChannel ch)
     {
-        // 1) retransmit due unacked reliables
+        // 1) retransmit due unacked reliables — REPACK into a fresh datagram (fresh segment seq,
+        //    NO NewInstance). Re-sending the stored NewInstance datagram would make the server
+        //    treat every retransmit as a brand-new session and wipe the per-session XOR base.
         foreach (var p in _retransmit)
             if (!p.Acked && nowMs - p.LastSendMs >= ResendIntervalMs + ResendSlackMs)
-            { ch.Send(p.Datagram); p.LastSendMs = nowMs; }
+            { SendSegment(ch, 0, default, p.Message); p.LastSendMs = nowMs; }
 
         // 2) build a fresh segment if we have any message or owe acks
         byte ackFlags = _acks.BuildAckFields(out byte[] ackFields);
@@ -86,18 +87,27 @@ public sealed class DrdpConnection
         bool hasMsg = msgBuf.Length > 0;
         if (!hasMsg && ackFlags == 0) return;
 
-        byte[] segment = Segment.Build(ackFlags, _segmentSeq, ackFields, msgBuf.AsSpan());
-        uint outerFlags = OuterFrame.FlagHasInstance | (_identityConfirmed ? 0 : OuterFrame.FlagNewInstance);
-        byte[] dg = OuterFrame.Build(_srcEp, _dstEp, outerFlags, _instanceId, segment);
-        ch.Send(dg);
-        _segmentSeq++;
+        SendSegment(ch, ackFlags, ackFields, msgBuf.AsSpan());
 
         // Only the reliable message is retransmitted; movement is superseded by the next tick.
-        // (The establishment join is sent before movement starts, so its retransmit datagram is join-only.)
         if (_pendingReliableMsg != null)
-            _retransmit.Add(new Pending { Datagram = dg, LastSendMs = nowMs, Seq = _pendingReliableSeq });
+            _retransmit.Add(new Pending { Message = _pendingReliableMsg, LastSendMs = nowMs, Seq = _pendingReliableSeq });
         _pendingReliableMsg = null;
         _pendingMovementMsg = null;
+    }
+
+    /// Wrap a segment in the outer frame and send it. NewInstance is set only on the very
+    /// first datagram of the connection; every later datagram (incl. retransmits) omits it,
+    /// so the server keeps ONE sticky session keyed by (addr, InstanceID). Establishment
+    /// still happens on HasInstance+InstanceID if the first datagram is lost.
+    private void SendSegment(IUdpChannel ch, byte ackFlags, ReadOnlySpan<byte> ackFields, ReadOnlySpan<byte> messages)
+    {
+        byte[] segment = Segment.Build(ackFlags, _segmentSeq, ackFields, messages);
+        uint flags = OuterFrame.FlagHasInstance;
+        if (!_newInstanceSent) { flags |= OuterFrame.FlagNewInstance; _newInstanceSent = true; }
+        byte[] dg = OuterFrame.Build(_srcEp, _dstEp, flags, _instanceId, segment);
+        ch.Send(dg);
+        _segmentSeq++;
     }
 
     public void Close(IUdpChannel ch)
