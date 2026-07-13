@@ -62,4 +62,28 @@ public class BotClientTests
         bot.Logout();
         Assert.Equal(BotState.Closed, bot.State);
     }
+
+    [Fact]
+    public void Movement_byte0_is_the_world_not_an_incrementing_counter()
+    {
+        // Regression: the server reads byte[0] of the record as World. A counter there decodes
+        // to a bogus world (1,2,3...) -> zone-change fault every packet. It must be the world id.
+        var region = new BoundingBoxRegion(new Vector3(4700, 40, 16700), new Vector3(5300, 60, 17300),
+            new Vector3(5000, 50, 17000), 1);
+        var conn = new DrdpConnection(0x0102, 0x00010000);
+        var ctx = new BotContext(conn, region, intervalMs: 100);
+        ctx.State.World = 3;                                  // BotClient sets this from cfg.WorldId
+        var moves = new List<byte[]>();
+        ctx.OnMovementEncoded = m => moves.Add(m);
+
+        var behavior = new MovementBehavior();
+        for (long t = 0; t <= 500; t += 100) behavior.Tick(t, ctx);
+
+        Assert.True(moves.Count >= 3);
+        foreach (var m in moves)                             // every move: type,size,seq,refnum, RLE(record)
+        {
+            Assert.True(Rle.TryDecode(new ReadOnlySpan<byte>(m, 5, m.Length - 5), out var record, out _));
+            Assert.Equal(3, record[0]);                      // world id, constant — never increments
+        }
+    }
 }

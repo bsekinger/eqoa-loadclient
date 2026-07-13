@@ -19,6 +19,7 @@ public sealed class BotClient
         _cfg = cfg; _ch = ch;
         _conn = new DrdpConnection(cfg.SrcEndpoint, cfg.InstanceId);
         _ctx = new BotContext(_conn, cfg.Region, cfg.IntervalMs);
+        _ctx.State.World = (byte)cfg.WorldId;   // byte[0] of every movement record = the bot's world (0 = Tunaria)
     }
 
     /// One unit of work. The fleet (or RunAsync) calls this on its clock.

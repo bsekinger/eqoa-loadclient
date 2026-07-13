@@ -6,7 +6,7 @@ public class MovementRecordTests
 {
     private static MovementState Spawn() => new()
     {
-        Counter = 7,
+        World = 7,
         X = 0f, Y = 1000f, Z = -4000f,
         Heading = 0f,
         YDelta = 0f,
@@ -25,12 +25,12 @@ public class MovementRecordTests
     }
 
     [Fact]
-    public void Byte0_is_counter_and_position_follows_big_endian()
+    public void Byte0_is_world_and_position_follows_big_endian()
     {
         var w = new PacketWriter();
         MovementRecord.Write(w, Spawn());
         var b = w.ToArray();
-        Assert.Equal(0x07, b[0]);                       // counter u8
+        Assert.Equal(0x07, b[0]);                       // world/zone id u8 (server reads byte[0] as World)
         Assert.Equal(new byte[]{0x1C,0x71,0xC7}, b[1..4]);   // X=0  -> 1C71C7
         Assert.Equal(new byte[]{0xFF,0xFF,0xFF}, b[4..7]);   // Y=1000 (max)
         Assert.Equal(new byte[]{0x00,0x00,0x00}, b[7..10]);  // Z=-4000 (min)

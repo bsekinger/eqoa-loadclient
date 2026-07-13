@@ -6,7 +6,7 @@ public static class MovementRecord
 {
     public static void Write(PacketWriter w, in MovementState s)
     {
-        w.WriteByte(s.Counter);                                  // [0] u8
+        w.WriteByte(s.World);                                    // [0] u8 = world/zone id (server decodes byte[0] as World; a counter here reads as a bogus world -> zone-change fault)
 
         // [1..10] position XYZ, 3 bytes each BE
         Quantizer.Write(w, s.X, MovementRanges.Pos[0].min, MovementRanges.Pos[0].max, 3);

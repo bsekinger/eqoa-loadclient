@@ -17,5 +17,5 @@ public sealed class BotContext
     public Action<byte[]>? OnMovementEncoded;   // test/metrics hook
 
     public BotContext(DrdpConnection conn, IMovementRegion region, int intervalMs)
-    { Conn = conn; Region = region; IntervalMs = intervalMs; Position = region.Spawn; State.Counter = 0; }
+    { Conn = conn; Region = region; IntervalMs = intervalMs; Position = region.Spawn; }
 }

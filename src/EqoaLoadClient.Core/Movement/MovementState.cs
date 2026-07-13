@@ -4,7 +4,7 @@ namespace EqoaLoadClient.Core.Movement;
 /// bot may leave them zero. Field31/36/37 are opaque passthroughs (u32/u8/u32).
 public struct MovementState
 {
-    public byte Counter;
+    public byte World;      // [0] u8 = world/zone id; the server reads byte[0] as World. NOT a counter.
     public float X, Y, Z;
     public float Heading;   // [-pi, pi]
     public float YDelta;    // curY - prevY, clamped to [-2000, 2000]

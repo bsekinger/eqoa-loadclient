@@ -14,7 +14,6 @@ public sealed class MovementBehavior : IBotBehavior
         var next = ctx.Region.NextStep(prev, stepUnits: 30f, out float heading);
         ctx.Position = next;
 
-        ctx.State.Counter++;
         ctx.State.X = next.X; ctx.State.Y = next.Y; ctx.State.Z = next.Z;
         ctx.State.Heading = heading;
         ctx.State.YDelta = Math.Clamp(next.Y - prev.Y, -2000f, 2000f);
