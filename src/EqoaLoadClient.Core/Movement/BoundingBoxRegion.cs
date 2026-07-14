@@ -13,7 +13,9 @@ public sealed class BoundingBoxRegion : IMovementRegion
     {
         _min = Vector3.Min(min, max); _max = Vector3.Max(min, max);
         Spawn = Vector3.Clamp(spawn, _min, _max);
-        _rng = new Random(seed);
+        // Decorrelate: new Random(1), new Random(2)... yield correlated first values, so adjacent-index
+        // bots (seed+i) would wander the same way. Avalanche-mix the seed (as WorldRegion does).
+        _rng = new Random(MixSeed(seed));
         _heading = (float)(_rng.NextDouble() * 2 * Math.PI - Math.PI);
     }
 
@@ -33,5 +35,15 @@ public sealed class BoundingBoxRegion : IMovementRegion
         next = Vector3.Clamp(current + dir * stepUnits, _min, _max);
         heading = _heading;
         return next;
+    }
+
+    /// Avalanche hash (splitmix-style) so sequential per-bot seeds map to well-separated RNG seeds.
+    private static int MixSeed(int seed)
+    {
+        uint h = (uint)seed;
+        h ^= h >> 16; h *= 0x7feb352du;
+        h ^= h >> 15; h *= 0x846ca68bu;
+        h ^= h >> 16;
+        return (int)h;
     }
 }
