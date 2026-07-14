@@ -14,5 +14,6 @@ public sealed class BotConfig
     public ushort JoinOpcode { get; init; }        // u16 GameOpcode from the emu registry (0x0BB0)
     public int IntervalMs { get; init; } = 100;
     public float RoamSpeed { get; init; } = 100f;  // units/sec; ~100 => a 2000-unit cell crossed in ~20s (well under a minute)
+    public byte MovingAnimState { get; init; } = 0x01;  // anim byte while moving (emu enum: 0x01 walk, 0x03 run)
     public required IMovementRegion Region { get; init; }
 }

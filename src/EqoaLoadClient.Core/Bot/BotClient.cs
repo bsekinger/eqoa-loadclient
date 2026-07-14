@@ -25,6 +25,7 @@ public sealed class BotClient
         _ctx = new BotContext(_conn, cfg.Region, cfg.IntervalMs);
         _ctx.State.World = (byte)cfg.WorldId;   // byte[0] of every movement record = the bot's world (0 = Tunaria)
         _ctx.RoamSpeed = cfg.RoamSpeed;
+        _ctx.MovingAnimState = cfg.MovingAnimState;
     }
 
     /// One unit of work. The fleet (or RunAsync) calls this on its clock.

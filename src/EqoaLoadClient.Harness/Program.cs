@@ -20,6 +20,7 @@ bool random = spawnMode.Equals("Random", StringComparison.OrdinalIgnoreCase);
 int sx = cfg.Int("SpawnX", 5950), sy = cfg.Int("SpawnY", 50), sz = cfg.Int("SpawnZ", 17950);
 int intervalMs = cfg.Int("IntervalMs", 100);
 int roamSpeed = cfg.Int("RoamSpeed", 100);
+byte movingAnim = (byte)cfg.Hex16("MovingAnim", 0x01);   // anim byte while moving: 01 walk, 03 run
 ushort cluster = cfg.UShort("ClusterId", 0);
 int durationSec = cfg.Int("DurationSec", 0);
 int seed = cfg.Int("Seed", 1);
@@ -122,6 +123,7 @@ for (int i = 0; i < botCount; i++)
         BotIndex = (uint)i,
         WorldId = botWorld, ClassId = 7, Level = 30, Cluster = cluster,
         JoinOpcode = opcode, IntervalMs = intervalMs, RoamSpeed = roamSpeed, Region = region,
+        MovingAnimState = movingAnim,
     };
     bots.Add(new FleetBot
     {
