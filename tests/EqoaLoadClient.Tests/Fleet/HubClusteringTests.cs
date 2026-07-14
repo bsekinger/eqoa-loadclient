@@ -65,4 +65,23 @@ public class HubClusteringTests
             Assert.True(region.Spawn.X > 0 && region.Spawn.Z > 0);
         }
     }
+
+    [Fact]
+    public void RegionFor_with_mesh_grounds_the_spawn_and_falls_back_off_mesh()
+    {
+        // flat plane y=25 covering the hub box
+        var mesh = new EqoaLoadClient.Core.Movement.WalkMesh(
+            new float[] { 5000, 25, 17000, 7000, 25, 17000, 7000, 25, 19000, 5000, 25, 19000 },
+            new int[] { 0, 1, 2, 0, 2, 3 });
+
+        var onMesh = HubClustering.RegionFor(new Hub(5950f, 17950f, 45), y: 50, jitter: 350, wander: 400,
+            seed: 7, mesh: mesh);
+        Assert.IsType<EqoaLoadClient.Core.Movement.MeshRegion>(onMesh);
+        Assert.Equal(25f, onMesh.Spawn.Y, 2);   // grounded, not the flat y=50
+
+        // hub far outside the plane: no walkable ground -> falls back to the flat box region
+        var offMesh = HubClustering.RegionFor(new Hub(50000f, 50000f, 1), y: 50, jitter: 350, wander: 400,
+            seed: 7, mesh: mesh);
+        Assert.IsType<EqoaLoadClient.Core.Movement.BoundingBoxRegion>(offMesh);
+    }
 }

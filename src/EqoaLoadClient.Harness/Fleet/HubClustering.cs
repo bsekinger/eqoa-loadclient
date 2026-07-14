@@ -92,6 +92,32 @@ public static class HubClustering
         return new BoundingBoxRegion(min, max, new Vector3(sx, y, sz), seed);
     }
 
+    /// Mesh-backed variant: same box and same per-seed spawn jitter, but bound to the client's
+    /// walkable geometry (terrain Y, wall/cliff rejection). Falls back to the flat box region when
+    /// no mesh is given or the hub box holds no walkable ground (e.g. a hub misconfigured into sea).
+    public static IMovementRegion RegionFor(Hub hub, float y, float jitter, float wander, int seed, WalkMesh? mesh)
+    {
+        if (mesh == null)
+        {
+            return RegionFor(hub, y, jitter, wander, seed);
+        }
+
+        float j = MathF.Min(MathF.Abs(jitter), wander);
+        var rng = new Random(MixSeed(seed));
+        float sx = MathF.Max(1f, hub.X + (float)(rng.NextDouble() * 2 - 1) * j);
+        float sz = MathF.Max(1f, hub.Z + (float)(rng.NextDouble() * 2 - 1) * j);
+        var min = new Vector2(MathF.Max(1f, hub.X - wander), MathF.Max(1f, hub.Z - wander));
+        var max = new Vector2(hub.X + wander, hub.Z + wander);
+        try
+        {
+            return new MeshRegion(mesh, min, max, new Vector2(sx, sz), seed);
+        }
+        catch (InvalidOperationException)
+        {
+            return RegionFor(hub, y, jitter, wander, seed);
+        }
+    }
+
     /// Avalanche-mix (splitmix-style) so sequential per-bot seeds map to well-separated RNG seeds.
     private static int MixSeed(int seed)
     {

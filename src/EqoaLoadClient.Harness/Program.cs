@@ -55,11 +55,28 @@ if (!clustered)
 IReadOnlyList<Hub> hubs = Array.Empty<Hub>();
 int[] hubAssignment = Array.Empty<int>();
 bool[] spreadMask = new bool[botCount];
+WalkMesh?[] hubMeshes = Array.Empty<WalkMesh?>();
 if (clustered)
 {
     hubs = HubClustering.ParseHubs(hubSpec);
     hubAssignment = HubClustering.AssignHubs(botCount, hubs, seed);
     spreadMask = WorldSpawns.SpreadMask(botCount, spreadFraction, seed ^ 0x5bd1e995);
+
+    // MeshRoot (e.g. C:\EQOA) upgrades hub bots to the client's walkable geometry: terrain Y,
+    // wall/cliff rejection. One mesh per hub, shared read-only by its bots. Spread-tail bots and
+    // worlds without extracted meshes keep the flat box regions.
+    string meshRoot = cfg.Str("MeshRoot", "");
+    if (meshRoot.Length > 0)
+    {
+        hubMeshes = new WalkMesh?[hubs.Count];
+        for (int h = 0; h < hubs.Count; h++)
+        {
+            hubMeshes[h] = MeshWorlds.LoadHub(meshRoot, world, hubs[h].X, hubs[h].Z, hubWander);
+            Console.WriteLine(hubMeshes[h] is WalkMesh m
+                ? $"[fleet] hub {h} ({hubs[h].X},{hubs[h].Z}): walk mesh loaded, {m.TriCount} tris"
+                : $"[fleet] hub {h} ({hubs[h].X},{hubs[h].Z}): no walk mesh — flat box region");
+        }
+    }
 }
 
 var perWorld = new Dictionary<int, int>();
@@ -78,7 +95,8 @@ for (int i = 0; i < botCount; i++)
         }
         else
         {
-            region = HubClustering.RegionFor(hubs[hubAssignment[i]], sy, hubJitter, hubWander, seed + i);
+            WalkMesh? mesh = hubMeshes.Length > 0 ? hubMeshes[hubAssignment[i]] : null;
+            region = HubClustering.RegionFor(hubs[hubAssignment[i]], sy, hubJitter, hubWander, seed + i, mesh);
             botWorld = world;
         }
     }
