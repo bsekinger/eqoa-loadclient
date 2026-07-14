@@ -39,4 +39,27 @@ public class MeshRegionTunariaTests
         }
         Assert.True(ys.Count >= 2, "real terrain should vary in height across an 800x800 hub");
     }
+
+    [Fact]
+    public void All_five_configured_hubs_load_a_mesh_and_ground_their_spawns()
+    {
+        if (!Directory.Exists(MeshDir)) return;   // meshes not on this machine
+
+        // the 5 world-0 starting-city hubs from App.config (Freeport, Qeynos, Highborne, Halas, Neriak)
+        var hubs = new[]
+        {
+            new Vector2(25000, 15000), new Vector2(5000, 17000), new Vector2(5000, 21000),
+            new Vector2(13000, 5000), new Vector2(25000, 9000),
+        };
+        foreach (var hub in hubs)
+        {
+            var mesh = WalkMesh.LoadForBounds(MeshDir, "Tunaria", hub - new Vector2(400, 400),
+                hub + new Vector2(400, 400), margin: 100);
+            Assert.True(mesh != null, $"hub ({hub.X},{hub.Y}): no mesh zones intersect");
+            var region = new MeshRegion(mesh!, hub - new Vector2(400, 400), hub + new Vector2(400, 400), hub, seed: 1);
+            Assert.True(mesh!.RaycastDown(region.Spawn.X, region.Spawn.Z, region.Spawn.Y + 1f, 3f, out float gy, out _),
+                $"hub ({hub.X},{hub.Y}): spawn not on the mesh");
+            Assert.Equal(gy, region.Spawn.Y, 2);
+        }
+    }
 }

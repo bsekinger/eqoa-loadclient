@@ -77,6 +77,10 @@ if (clustered)
                 : $"[fleet] hub {h} ({hubs[h].X},{hubs[h].Z}): no walk mesh — flat box region");
         }
     }
+    else
+    {
+        Console.WriteLine("[fleet] MeshRoot not set — hub bots wander flat boxes at SpawnY (no terrain Y)");
+    }
 }
 
 var perWorld = new Dictionary<int, int>();
