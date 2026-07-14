@@ -31,11 +31,16 @@ int rampMs = cfg.Int("RampMs", 0);
 int tickThreads = Math.Max(1, cfg.Int("TickThreads", 1));
 
 // Hub clustering (Clustered mode): weighted hubs + in-hub wander, so cold-zone count stays bounded.
-string hubSpec = cfg.Str("Hubs", "5950,17950,45; 15315,11715,30; 15750,20373,25");
+string hubSpec = cfg.Str("Hubs", "25000,15000,30; 5000,17000,25; 5000,21000,20; 13000,5000,15; 25000,9000,10");
 float hubJitter = cfg.Int("HubJitter", 350);
 float hubWander = cfg.Int("HubWander", 400);
 
-// Fixed/Random roam the world's valid area; Clustered wanders a per-hub box instead (no area needed).
+// Random tail (Clustered mode): SpreadFraction of the fleet spawns at random valid cells across
+// SpreadWorlds (cell-count-weighted), so the ladder covers the whole game, not just the hub cities.
+double spreadFraction = Math.Clamp(cfg.Int("SpreadPercent", 25) / 100.0, 0.0, 1.0);
+int[] spreadWorlds = WorldSpawns.ParseWorlds(cfg.Str("SpreadWorlds", "0,1,2,3,4,5"));
+
+// Fixed/Random roam the world's valid area; Clustered wanders a per-hub/per-cell box instead.
 IValidArea? area = null;
 if (!clustered)
 {
@@ -49,25 +54,42 @@ if (!clustered)
 
 IReadOnlyList<Hub> hubs = Array.Empty<Hub>();
 int[] hubAssignment = Array.Empty<int>();
+bool[] spreadMask = new bool[botCount];
 if (clustered)
 {
     hubs = HubClustering.ParseHubs(hubSpec);
     hubAssignment = HubClustering.AssignHubs(botCount, hubs, seed);
+    spreadMask = WorldSpawns.SpreadMask(botCount, spreadFraction, seed ^ 0x5bd1e995);
 }
 
+var perWorld = new Dictionary<int, int>();
 var bots = new List<FleetBot>(botCount);
 for (int i = 0; i < botCount; i++)
 {
     IMovementRegion region;
+    ushort botWorld = world;
     if (clustered)
     {
-        region = HubClustering.RegionFor(hubs[hubAssignment[i]], sy, hubJitter, hubWander, seed + i);
+        if (spreadMask[i])
+        {
+            Spawn s = WorldSpawns.Spread(spreadWorlds, sy, hubWander, seed + 100_000 + i);
+            region = s.Region;
+            botWorld = (ushort)s.WorldId;
+        }
+        else
+        {
+            region = HubClustering.RegionFor(hubs[hubAssignment[i]], sy, hubJitter, hubWander, seed + i);
+            botWorld = world;
+        }
     }
     else
     {
         Vector3? fixedSpawn = random ? null : new Vector3(sx, sy, sz);
         region = new WorldRegion(area!, sy, seed + i, fixedSpawn);
+        botWorld = world;
     }
+
+    perWorld[botWorld] = perWorld.GetValueOrDefault(botWorld) + 1;
 
     var inner = new UdpChannel(serverEp);          // own socket (own UDP source port) per bot
     var ch = new CountingChannel(inner);
@@ -76,7 +98,7 @@ for (int i = 0; i < botCount; i++)
         SrcEndpoint = (ushort)(baseSrcEp + i),     // unique per bot -> distinct emu session (not all "Session 0")
         InstanceId = baseInstance + (uint)i,       // unique per bot (emu keys on (addr, InstanceID))
         BotIndex = (uint)i,
-        WorldId = world, ClassId = 7, Level = 30, Cluster = cluster,
+        WorldId = botWorld, ClassId = 7, Level = 30, Cluster = cluster,
         JoinOpcode = opcode, IntervalMs = intervalMs, RoamSpeed = roamSpeed, Region = region,
     };
     bots.Add(new FleetBot
@@ -88,9 +110,21 @@ for (int i = 0; i < botCount; i++)
     });
 }
 
-string where = clustered ? $"{hubs.Count} hub(s)" : random ? "random valid points" : $"fixed ({sx},{sy},{sz})";
-Console.WriteLine($"[fleet] {bots.Count} bot(s), world {world}, {where}, ramp {rampMs}ms, {tickThreads} tick-thread(s), " +
+int spreadCount = 0;
+for (int i = 0; i < botCount; i++)
+{
+    if (clustered && spreadMask[i])
+    {
+        spreadCount++;
+    }
+}
+
+string where = clustered
+    ? $"{hubs.Count} hub(s) + {spreadCount} spread across worlds [{string.Join(",", spreadWorlds)}]"
+    : random ? "random valid points" : $"fixed ({sx},{sy},{sz})";
+Console.WriteLine($"[fleet] {bots.Count} bot(s), {where}, ramp {rampMs}ms, {tickThreads} tick-thread(s), " +
                   $"roam {roamSpeed}u/s, {(durationSec > 0 ? durationSec + "s" : "until Ctrl-C")}");
+Console.WriteLine($"[fleet] per-world spawn: {string.Join("  ", perWorld.OrderBy(kv => kv.Key).Select(kv => $"w{kv.Key}={kv.Value}"))}");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };

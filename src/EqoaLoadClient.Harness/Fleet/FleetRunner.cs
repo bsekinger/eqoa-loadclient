@@ -102,16 +102,14 @@ public sealed class FleetRunner
 
     private void Worker(int wi, Stopwatch sw, CancellationToken ct)
     {
-        // Contiguous partition of the bot list; each bot is ticked by exactly this thread.
-        int per = (_bots.Count + _threads - 1) / _threads;
-        int start = wi * per;
-        int end = Math.Min(_bots.Count, start + per);
-
+        // Strided partition (bot i -> thread i % _threads): each bot is ticked by exactly one thread,
+        // and adjacent join offsets spread evenly across threads so no single thread carries the whole
+        // ramp front (contiguous would pile bots 0..per-1 onto thread 0 during the ramp).
         while (!ct.IsCancellationRequested && (_durationSec == 0 || sw.Elapsed.TotalSeconds < _durationSec))
         {
             long now = sw.ElapsedMilliseconds;
             long t0 = Stopwatch.GetTimestamp();
-            for (int i = start; i < end; i++)
+            for (int i = wi; i < _bots.Count; i += _threads)
             {
                 FleetBot fb = _bots[i];
                 if (now >= fb.JoinAtMs)
