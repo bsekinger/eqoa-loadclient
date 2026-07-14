@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using EqoaLoadClient.Core.Bot;
+using EqoaLoadClient.Core.Movement;
 using EqoaLoadClient.Core.Transport;
 
 namespace EqoaLoadClient.Harness;
@@ -25,8 +26,13 @@ public sealed class FleetRunner
     private readonly int _durationSec;
     private readonly double[] _workerSweepMs;
     private readonly long[] _workerBacklog;
+    private readonly int _tagBot;                 // one bot whose position is printed every 10 s (movement proof)
+    private readonly float _zoneLoadMargin;       // print when a bot comes within this many units of a cell border (0 = off)
+    private readonly bool[] _nearBorder;          // per-bot band state, so zone-load prints once per approach
+    private long _lastTagPrintMs = -10_000;       // tagged bot prints at ~t=0 then every 10 s
 
-    public FleetRunner(IReadOnlyList<FleetBot> bots, int threads, int intervalMs, int durationSec)
+    public FleetRunner(IReadOnlyList<FleetBot> bots, int threads, int intervalMs, int durationSec,
+                       int tagBot = 0, int zoneLoadMargin = 100)
     {
         _bots = bots;
         _threads = Math.Clamp(threads, 1, Math.Max(1, bots.Count));
@@ -34,6 +40,9 @@ public sealed class FleetRunner
         _durationSec = durationSec;
         _workerSweepMs = new double[_threads];
         _workerBacklog = new long[_threads];
+        _tagBot = Math.Clamp(tagBot, 0, Math.Max(0, bots.Count - 1));
+        _zoneLoadMargin = zoneLoadMargin;
+        _nearBorder = new bool[bots.Count];
     }
 
     public void Run(CancellationToken ct)
@@ -108,6 +117,7 @@ public sealed class FleetRunner
                 if (now >= fb.JoinAtMs)
                 {
                     fb.Bot.Tick(now);
+                    EmitDiagnostics(i, fb, now);   // owning thread only -> no race on Position/state
                 }
             }
 
@@ -123,6 +133,32 @@ public sealed class FleetRunner
             {
                 Thread.Sleep(sleep);
             }
+        }
+    }
+
+    /// Runs on the bot's owning tick thread right after Tick, so reads of Position/State are race-free.
+    private void EmitDiagnostics(int i, FleetBot fb, long now)
+    {
+        var p = fb.Bot.Position;
+        float d = ZoneGrid.DistToNearestBorder(p.X, p.Z, out int ncx, out int ncz);
+        var (cx, cz) = ZoneGrid.CellOf(p.X, p.Z);
+
+        // Zone-load trigger: bot just entered the load band around a cell border.
+        if (_zoneLoadMargin > 0)
+        {
+            bool near = d <= _zoneLoadMargin;
+            if (near && !_nearBorder[i])
+            {
+                Console.WriteLine($"[zone-load] bot {i} at ({p.X:F0},{p.Z:F0}) cell [{cx},{cz}] within {d:F0}u of a border -> server loads [{ncx},{ncz}]");
+            }
+            _nearBorder[i] = near;
+        }
+
+        // Tagged bot: position every 10 s (proof the bot is actually moving).
+        if (i == _tagBot && now - _lastTagPrintMs >= 10_000)
+        {
+            _lastTagPrintMs = now;
+            Console.WriteLine($"[tag] bot {i} t={now / 1000}s pos=({p.X:F0},{p.Y:F0},{p.Z:F0}) cell [{cx},{cz}] {d:F0}u to border, state={fb.Bot.State}");
         }
     }
 

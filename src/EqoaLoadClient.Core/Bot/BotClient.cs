@@ -14,6 +14,10 @@ public sealed class BotClient
 
     public BotState State { get; private set; } = BotState.New;
 
+    /// Current wander position (updated by MovementBehavior each move). Read on the bot's owning
+    /// thread for diagnostics — the fleet ticks each bot from exactly one thread.
+    public System.Numerics.Vector3 Position => _ctx.Position;
+
     public BotClient(BotConfig cfg, IUdpChannel ch)
     {
         _cfg = cfg; _ch = ch;

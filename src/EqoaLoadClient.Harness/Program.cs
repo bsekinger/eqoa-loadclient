@@ -95,6 +95,8 @@ Console.WriteLine($"[fleet] {bots.Count} bot(s), world {world}, {where}, ramp {r
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-var runner = new FleetRunner(bots, tickThreads, intervalMs, durationSec);
+int tagBot = cfg.Int("TagBot", 0);
+int zoneLoadMargin = cfg.Int("ZoneLoadMargin", 100);
+var runner = new FleetRunner(bots, tickThreads, intervalMs, durationSec, tagBot, zoneLoadMargin);
 runner.Run(cts.Token);
 Console.WriteLine("[fleet] done.");
